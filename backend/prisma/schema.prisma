@@ -1,0 +1,140 @@
+// ASK Kiosk - Prisma schema
+// Postgres. CommonJS backend.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// A physical kiosk machine. Architecture supports many; v1 runs one.
+model Kiosk {
+  id          String   @id @default(uuid())
+  name        String
+  location    String?
+  isActive    Boolean  @default(true)
+  // Local network address of the WiFi printer this kiosk drives.
+  printerIp   String?
+  printerPort Int      @default(9100)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  jobs        Job[]
+  settings    Setting[]
+
+  @@index([isActive])
+}
+
+// Key-value settings. Global rows have kioskId = null.
+// A per-kiosk row with the same key overrides the global value.
+model Setting {
+  id        String   @id @default(uuid())
+  key       String
+  value     String // stored as JSON string
+  kioskId   String?
+  kiosk     Kiosk?   @relation(fields: [kioskId], references: [id])
+  updatedAt DateTime @updatedAt
+
+  @@unique([key, kioskId])
+  @@index([kioskId])
+}
+
+// Job lifecycle states. The print is never charged-as-done and the code is
+// never consumed until the printer confirms success.
+enum JobState {
+  CREATED // uploaded and configured, not yet paid
+  PAID // payment confirmed by webhook
+  CODE_ISSUED // unique code generated and shown
+  CLAIMED // correct code entered at the kiosk
+  PRINTING // sent to printer, in progress
+  PRINTED_OK // printer confirmed success; file deleted; code consumed
+  FAILED_REFUNDED // retries exhausted; auto-refund issued
+  EXPIRED // code expired before claim; handled per settings
+}
+
+enum PrintMode {
+  BW
+  COLOR
+}
+
+model Job {
+  id           String    @id @default(uuid())
+  kioskId      String
+  kiosk        Kiosk     @relation(fields: [kioskId], references: [id])
+
+  // File handling. Path points to the print-ready file on the server.
+  // It is deleted after a successful print; only metadata remains.
+  originalName String?
+  fileType     String? // application/pdf, image/jpeg, etc
+  filePath     String? // null once deleted
+  fileDeleted  Boolean   @default(false)
+
+  // Configuration
+  pageCount    Int       @default(0)
+  copies       Int       @default(1)
+  mode         PrintMode @default(BW)
+  doubleSided  Boolean   @default(false)
+  pageRange    String? // "all" or "1-5,7"
+  sheetCount   Int       @default(0) // computed sheets to print (for billing/limits)
+
+  // Pricing snapshot (rupees), captured at creation from settings
+  unitRate     Float     @default(0)
+  amount       Float     @default(0)
+
+  // State machine
+  state        JobState  @default(CREATED)
+  printRetries Int       @default(0)
+
+  // Claim code (store a hash, never the raw code beyond display response)
+  codeHash     String?
+  codeExpiresAt DateTime?
+  codeAttempts Int       @default(0)
+
+  payment      Payment?
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  paidAt       DateTime?
+  printedAt    DateTime?
+  // Short-retention purge marker
+  purgeAfter   DateTime?
+
+  @@index([kioskId])
+  @@index([state])
+  @@index([codeHash])
+  @@index([createdAt])
+}
+
+enum PaymentStatus {
+  INITIATED
+  SUCCESS
+  FAILED
+  REFUNDED
+}
+
+model Payment {
+  id              String        @id @default(uuid())
+  jobId           String        @unique
+  job             Job           @relation(fields: [jobId], references: [id])
+
+  gateway         String        @default("razorpay")
+  gatewayOrderId  String? // razorpay order id
+  gatewayPaymentId String?      @unique // razorpay payment id
+  method          String? // upi, card, wallet (type only, no card data)
+
+  amount          Float
+  currency        String        @default("INR")
+  status          PaymentStatus @default(INITIATED)
+
+  refundId        String?
+  refundedAt      DateTime?
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([status])
+  @@index([gatewayOrderId])
+}
