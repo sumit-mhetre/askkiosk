@@ -55,70 +55,80 @@ export default function KioskScreen() {
   }, [view]);
 
   return (
-    <div className="min-h-full flex flex-col items-center justify-center px-4 py-6 max-w-md mx-auto">
-      <div className="card w-full p-5">
+    <div className="min-h-full flex flex-col items-center justify-center px-4 py-6 max-w-4xl mx-auto">
+      <div className="card w-full p-6">
         <div className="py-1">
           <Logo />
         </div>
-        <p className="text-center text-muted text-sm mb-3">Print Your Documents</p>
+        <p className="text-center text-muted text-sm mb-4">Print Your Documents</p>
 
         {view === VIEW.HOME && (
-          <div className="text-center">
-            {/* QR section */}
-            <div className="bg-bg border border-line rounded-2xl p-4 my-2 flex flex-col items-center">
-              <p className="font-semibold mb-2 text-sm">Scan QR Code to Start</p>
-              <div className="bg-white p-2 rounded-xl border border-line">
-                <QRCodeSVG value={phoneUrl} size={140} />
+          <div className="grid md:grid-cols-[1fr_auto_1fr] gap-4 items-stretch">
+            {/* Left: QR section */}
+            <div className="bg-bg border border-line rounded-2xl p-5 flex flex-col items-center justify-center">
+              <p className="font-semibold mb-3 text-sm">Scan QR Code to Start</p>
+              <div className="bg-white p-3 rounded-xl border border-line">
+                <QRCodeSVG value={phoneUrl} size={180} />
               </div>
+              <p className="text-muted text-xs mt-3 text-center">
+                Scan with any camera or QR app
+              </p>
             </div>
 
-            {/* OR separator */}
-            <div className="flex items-center gap-3 my-3">
+            {/* Vertical OR separator (md+); horizontal separator on mobile */}
+            <div className="hidden md:flex flex-col items-center justify-center">
+              <div className="w-px flex-1 bg-line" />
+              <span className="text-muted text-sm my-2">or</span>
+              <div className="w-px flex-1 bg-line" />
+            </div>
+            <div className="flex md:hidden items-center gap-3">
               <div className="flex-1 h-px bg-line" />
               <span className="text-muted text-sm">or</span>
               <div className="flex-1 h-px bg-line" />
             </div>
 
-            {/* Code entry section, always visible */}
-            <p className="font-semibold text-sm mb-1">Enter Your Code</p>
-            <p className="text-muted text-xs mb-3">Type the 6 digit code from your phone</p>
+            {/* Right: Code entry section */}
+            <div className="flex flex-col items-center text-center">
+              <p className="font-semibold text-sm">Enter Your Code</p>
+              <p className="text-muted text-xs mb-3">Type the 6 digit code from your phone</p>
 
-            <div className="flex justify-center gap-2 mb-4">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="w-9 h-11 rounded-lg border flex items-center justify-center text-xl font-bold"
-                  style={{ borderColor: code[i] ? "#1E73E8" : "#E5E7EB" }}
-                >
-                  {code[i] || ""}
-                </div>
-              ))}
-            </div>
+              <div className="flex justify-center gap-2 mb-4">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div
+                    key={i}
+                    className="w-9 h-11 rounded-lg border flex items-center justify-center text-xl font-bold"
+                    style={{ borderColor: code[i] ? "#1E73E8" : "#E5E7EB" }}
+                  >
+                    {code[i] || ""}
+                  </div>
+                ))}
+              </div>
 
-            <div className="grid grid-cols-3 gap-2">
-              {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => (
-                <button key={n} className="key" onClick={() => press(String(n))}>
-                  {n}
+              <div className="grid grid-cols-3 gap-2 w-full max-w-[260px]">
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => (
+                  <button key={n} className="key" onClick={() => press(String(n))}>
+                    {n}
+                  </button>
+                ))}
+                <button className="key" onClick={() => setCode("")}>
+                  C
                 </button>
-              ))}
-              <button className="key" onClick={() => setCode("")}>
-                C
-              </button>
-              <button className="key" onClick={() => press("0")}>
-                0
-              </button>
-              <button className="key" onClick={backspace}>
-                ⌫
+                <button className="key" onClick={() => press("0")}>
+                  0
+                </button>
+                <button className="key" onClick={backspace}>
+                  ⌫
+                </button>
+              </div>
+
+              <button
+                className="btn btn-primary mt-4 w-full max-w-[260px]"
+                onClick={submit}
+                disabled={busy || code.length < 4}
+              >
+                {busy ? "Printing..." : "Submit"}
               </button>
             </div>
-
-            <button
-              className="btn btn-primary mt-4"
-              onClick={submit}
-              disabled={busy || code.length < 4}
-            >
-              {busy ? "Printing..." : "Submit"}
-            </button>
           </div>
         )}
 
