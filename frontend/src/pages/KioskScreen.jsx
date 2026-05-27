@@ -3,7 +3,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { Logo } from "../components/UI.jsx";
 import { kioskClaim } from "../lib/api.js";
 
-const VIEW = { HOME: "home", ENTER: "enter", RESULT: "result" };
+const VIEW = { HOME: "home", RESULT: "result" };
 
 export default function KioskScreen() {
   const [view, setView] = useState(VIEW.HOME);
@@ -14,11 +14,12 @@ export default function KioskScreen() {
   // The phone web app URL. The QR points to the site root.
   const phoneUrl = window.location.origin + "/";
 
-function press(d) {
-    setCode((prev) => (prev.length >= 6 ? prev : prev + d));
+  function press(d) {
+    if (code.length >= 6) return;
+    setCode(code + d);
   }
   function backspace() {
-    setCode((prev) => prev.slice(0, -1));
+    setCode(code.slice(0, -1));
   }
 
   async function submit() {
@@ -54,42 +55,39 @@ function press(d) {
   }, [view]);
 
   return (
-    <div className="min-h-full flex flex-col items-center justify-center px-6 py-8 max-w-md mx-auto">
-      <div className="card w-full p-6">
-        <div className="py-2">
+    <div className="min-h-full flex flex-col items-center justify-center px-4 py-6 max-w-md mx-auto">
+      <div className="card w-full p-5">
+        <div className="py-1">
           <Logo />
         </div>
-        <p className="text-center text-muted text-sm mb-4">Print Your Documents</p>
+        <p className="text-center text-muted text-sm mb-3">Print Your Documents</p>
 
         {view === VIEW.HOME && (
           <div className="text-center">
-            <div className="bg-bg border border-line rounded-2xl p-6 my-3 flex flex-col items-center">
-              <p className="font-semibold mb-3">Scan QR Code to Start</p>
-              <div className="bg-white p-3 rounded-xl border border-line">
-                <QRCodeSVG value={phoneUrl} size={180} />
+            {/* QR section */}
+            <div className="bg-bg border border-line rounded-2xl p-4 my-2 flex flex-col items-center">
+              <p className="font-semibold mb-2 text-sm">Scan QR Code to Start</p>
+              <div className="bg-white p-2 rounded-xl border border-line">
+                <QRCodeSVG value={phoneUrl} size={140} />
               </div>
             </div>
-            <div className="flex items-center gap-3 my-4">
+
+            {/* OR separator */}
+            <div className="flex items-center gap-3 my-3">
               <div className="flex-1 h-px bg-line" />
               <span className="text-muted text-sm">or</span>
               <div className="flex-1 h-px bg-line" />
             </div>
-            <button className="btn btn-primary" onClick={() => setView(VIEW.ENTER)}>
-              Enter Code
-            </button>
-          </div>
-        )}
 
-        {view === VIEW.ENTER && (
-          <div className="text-center">
-            <p className="font-bold text-lg mb-1">Enter Code</p>
-            <p className="text-muted text-sm mb-4">Type your 6 digit code</p>
+            {/* Code entry section, always visible */}
+            <p className="font-semibold text-sm mb-1">Enter Your Code</p>
+            <p className="text-muted text-xs mb-3">Type the 6 digit code from your phone</p>
 
-            <div className="flex justify-center gap-2 mb-5">
+            <div className="flex justify-center gap-2 mb-4">
               {Array.from({ length: 6 }).map((_, i) => (
                 <div
                   key={i}
-                  className="w-10 h-12 rounded-lg border flex items-center justify-center text-2xl font-bold"
+                  className="w-9 h-11 rounded-lg border flex items-center justify-center text-xl font-bold"
                   style={{ borderColor: code[i] ? "#1E73E8" : "#E5E7EB" }}
                 >
                   {code[i] || ""}
@@ -103,7 +101,7 @@ function press(d) {
                   {n}
                 </button>
               ))}
-              <button className="key" onClick={reset}>
+              <button className="key" onClick={() => setCode("")}>
                 C
               </button>
               <button className="key" onClick={() => press("0")}>
@@ -115,7 +113,7 @@ function press(d) {
             </div>
 
             <button
-              className="btn btn-primary mt-5"
+              className="btn btn-primary mt-4"
               onClick={submit}
               disabled={busy || code.length < 4}
             >
