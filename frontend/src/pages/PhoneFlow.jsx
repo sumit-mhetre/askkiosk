@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Logo, StepHeader, ErrorNote } from "../components/UI.jsx";
 import {
   uploadFile,
@@ -6,6 +6,7 @@ import {
   configureJob,
   createPayment,
   verifyPayment,
+  getStatus,
 } from "../lib/api.js";
 import { loadRazorpayScript, openCheckout } from "../lib/razorpay.js";
 
@@ -15,6 +16,8 @@ const STEP = {
   CONFIG: "config",
   PAYING: "paying",
   CODE: "code",
+  PRINTED: "printed",
+  REFUNDED: "refunded",
 };
 
 export default function PhoneFlow() {
@@ -34,6 +37,39 @@ export default function PhoneFlow() {
 
   const [code, setCode] = useState("");
 
+  // Poll job status while on the CODE screen so the phone knows when the
+  // kiosk has actually printed (or refunded), and updates the view itself.
+  useEffect(() => {
+    if (step !== STEP.CODE || !jobId) return;
+    let stopped = false;
+    const startedAt = Date.now();
+    const MAX_MS = 10 * 60 * 1000; // stop polling after 10 minutes
+    const tick = async () => {
+      if (stopped) return;
+      try {
+        const s = await getStatus(jobId);
+        if (s.state === "PRINTED_OK") {
+          setStep(STEP.PRINTED);
+          return;
+        }
+        if (s.state === "FAILED_REFUNDED") {
+          setStep(STEP.REFUNDED);
+          return;
+        }
+      } catch (e) {
+        // ignore transient errors; keep polling
+      }
+      if (Date.now() - startedAt < MAX_MS) {
+        setTimeout(tick, 3000);
+      }
+    };
+    const t = setTimeout(tick, 3000);
+    return () => {
+      stopped = true;
+      clearTimeout(t);
+    };
+  }, [step, jobId]);
+
   async function handleFile(e) {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
@@ -47,8 +83,11 @@ export default function PhoneFlow() {
         setStep(STEP.UNLOCK);
       } else {
         setPageCount(res.pageCount);
+        // For a single-page file, duplex makes no sense; force single sided.
+        const effDouble = res.pageCount > 1 ? doubleSided : false;
+        if (effDouble !== doubleSided) setDoubleSided(false);
         setStep(STEP.CONFIG);
-        await recalc(res.jobId, copies, mode, doubleSided);
+        await recalc(res.jobId, copies, mode, effDouble);
       }
     } catch (err) {
       setError(errMsg(err));
@@ -64,8 +103,10 @@ export default function PhoneFlow() {
       const res = await unlockJob(jobId, password);
       setPageCount(res.pageCount);
       setPassword("");
+      const effDouble = res.pageCount > 1 ? doubleSided : false;
+      if (effDouble !== doubleSided) setDoubleSided(false);
       setStep(STEP.CONFIG);
-      await recalc(jobId, copies, mode, doubleSided);
+      await recalc(jobId, copies, mode, effDouble);
     } catch (err) {
       setError(errMsg(err));
     } finally {
@@ -216,23 +257,25 @@ export default function PhoneFlow() {
               </div>
             </div>
 
-            <div className="my-3">
-              <div className="text-sm text-muted mb-2">Sides</div>
-              <div className="grid grid-cols-2 gap-2">
-                <Choice
-                  active={!doubleSided}
-                  onClick={() => changeConfig({ doubleSided: false })}
-                >
-                  Single Sided
-                </Choice>
-                <Choice
-                  active={doubleSided}
-                  onClick={() => changeConfig({ doubleSided: true })}
-                >
-                  Double Sided
-                </Choice>
+            {pageCount > 1 && (
+              <div className="my-3">
+                <div className="text-sm text-muted mb-2">Sides</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Choice
+                    active={!doubleSided}
+                    onClick={() => changeConfig({ doubleSided: false })}
+                  >
+                    Single Sided
+                  </Choice>
+                  <Choice
+                    active={doubleSided}
+                    onClick={() => changeConfig({ doubleSided: true })}
+                  >
+                    Double Sided
+                  </Choice>
+                </div>
               </div>
-            </div>
+            )}
 
             <div className="flex items-center justify-between border-t border-line mt-4 pt-4">
               <span className="text-muted">Total Amount</span>
@@ -275,6 +318,43 @@ export default function PhoneFlow() {
               Go to the kiosk, tap Enter Code, and type the number above.
               Collect your printout from the slot.
             </p>
+            <div className="flex items-center justify-center gap-2 mt-4 text-muted text-xs">
+              <Spinner small />
+              <span>Waiting for kiosk to print...</span>
+            </div>
+          </div>
+        )}
+
+        {step === STEP.PRINTED && (
+          <div className="text-center py-4">
+            <div
+              className="mx-auto w-16 h-16 rounded-full flex items-center justify-center text-3xl"
+              style={{ background: "#E7F3EA", color: "#2E9E4F" }}
+            >
+              ✓
+            </div>
+            <p className="font-bold text-lg mt-4">Printed Successfully</p>
+            <p className="text-muted text-sm mt-2 px-2">
+              Your document has been printed. Please collect it from the kiosk slot.
+            </p>
+            <p className="text-muted text-xs mt-3">Thank you for using ASK Kiosk.</p>
+          </div>
+        )}
+
+        {step === STEP.REFUNDED && (
+          <div className="text-center py-4">
+            <div
+              className="mx-auto w-16 h-16 rounded-full flex items-center justify-center text-3xl"
+              style={{ background: "#FDEAEA", color: "#D33" }}
+            >
+              !
+            </div>
+            <p className="font-bold text-lg mt-4">Print Failed</p>
+            <p className="text-muted text-sm mt-2 px-2">
+              The printer could not complete your job. Your payment has been
+              refunded and will reflect in your account shortly.
+            </p>
+            <p className="text-muted text-xs mt-3">Sorry for the inconvenience.</p>
           </div>
         )}
       </div>
@@ -323,10 +403,11 @@ function Choice({ active, onClick, children }) {
   );
 }
 
-function Spinner() {
+function Spinner({ small }) {
+  const size = small ? "w-4 h-4 border-2" : "w-8 h-8 border-4";
   return (
     <div
-      className="inline-block w-8 h-8 rounded-full border-4 border-line"
+      className={`inline-block ${size} rounded-full border-line`}
       style={{ borderTopColor: "#1E73E8", animation: "spin 0.8s linear infinite" }}
     />
   );
