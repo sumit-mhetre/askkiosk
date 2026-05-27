@@ -1,7 +1,9 @@
 // Axios API helper. In dev, /api proxies to the backend on port 5000.
 import axios from "axios";
 
-const api = axios.create({ baseURL: "/api" });
+const api = axios.create({
+  baseURL: (import.meta.env.VITE_API_BASE_URL || "") + "/api",
+});
 
 export async function uploadFile(file) {
   const form = new FormData();
