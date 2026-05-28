@@ -4,6 +4,7 @@ const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const routes = require("./routes");
+const { startExpiryLoop, runExpirySweep } = require("./services/expiryService");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -20,6 +21,13 @@ app.use(
     },
   })
 );
+
+// Lazy expiry check: on any API activity, trigger a throttled sweep so that
+// unused-code refunds still happen on hosting that sleeps when idle.
+app.use((req, res, next) => {
+  runExpirySweep().catch(() => {});
+  next();
+});
 
 // Health check
 app.get("/api/health", (req, res) => res.json({ ok: true, service: "ask-kiosk" }));
@@ -42,4 +50,6 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`ASK Kiosk backend running on http://localhost:${PORT}`);
+  // Background expiry loop (fires while the process is awake).
+  startExpiryLoop(60000);
 });
