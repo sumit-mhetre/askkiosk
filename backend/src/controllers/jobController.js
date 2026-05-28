@@ -10,18 +10,28 @@ const codeSvc = require("../services/codeService");
 const rzp = require("../services/razorpayService");
 const printSvc = require("../services/printService");
 
-// Resolve the active kiosk (single-kiosk pilot: first one).
+// Resolve the active kiosk (single-kiosk fallback: first active one).
 async function getActiveKiosk() {
   return prisma.kiosk.findFirst({ where: { isActive: true } });
 }
 
-// POST /api/jobs/upload  (multipart: file)
+// Resolve the kiosk for a request. Prefers an explicit kioskId (from the QR),
+// falls back to the first active kiosk so older single-kiosk setups still work.
+async function resolveKiosk(kioskId) {
+  if (kioskId) {
+    const k = await prisma.kiosk.findUnique({ where: { id: kioskId } });
+    if (k) return k;
+  }
+  return getActiveKiosk();
+}
+
+// POST /api/jobs/upload  (multipart: file, body: kioskId)
 // Inspects the file, returns pageCount or an encrypted flag.
 async function uploadFile(req, res) {
   try {
     if (!req.file) return res.status(400).json({ error: "No file uploaded." });
 
-    const kiosk = await getActiveKiosk();
+    const kiosk = await resolveKiosk(req.body.kioskId);
     if (!kiosk) return res.status(500).json({ error: "No active kiosk." });
 
     const settings = await getSettings(kiosk.id);
@@ -36,9 +46,11 @@ async function uploadFile(req, res) {
     const info = await fileSvc.inspectFile(req.file.path, req.file.mimetype);
 
     // Create the job in CREATED state now so we have an id to attach to.
+    // Tag it with the kiosk's operator so the code is operator-scoped.
     const job = await prisma.job.create({
       data: {
         kioskId: kiosk.id,
+        operatorId: kiosk.operatorId || null,
         originalName: req.file.originalname,
         fileType: req.file.mimetype,
         filePath: req.file.path,
@@ -301,7 +313,7 @@ async function razorpayWebhook(req, res) {
 // Kiosk enters the code, then prints. This is where the print actually happens.
 async function claimAndPrint(req, res) {
   try {
-    const kiosk = await getActiveKiosk();
+    const kiosk = await resolveKiosk(req.body.kioskId);
     if (!kiosk) return res.status(500).json({ error: "No active kiosk." });
 
     const { code } = req.body;
@@ -310,9 +322,11 @@ async function claimAndPrint(req, res) {
     const settings = await getSettings(kiosk.id);
     const codeHash = codeSvc.hashCode(String(code).trim());
 
-    const job = await prisma.job.findFirst({
-      where: { kioskId: kiosk.id, codeHash, state: "CODE_ISSUED" },
-    });
+    const where = kiosk.operatorId
+      ? { operatorId: kiosk.operatorId, codeHash, state: "CODE_ISSUED" }
+      : { kioskId: kiosk.id, codeHash, state: "CODE_ISSUED" };
+
+    const job = await prisma.job.findFirst({ where });
 
     if (!job) {
       return res.status(404).json({ error: "Invalid or already used code." });
@@ -435,7 +449,9 @@ async function jobStatus(req, res) {
 // Returns { jobId, fileUrl } so the helper can fetch the file.
 async function claimOnly(req, res) {
   try {
-    const kiosk = await getActiveKiosk();
+    // The kiosk identifies itself via kioskId (from its saved config). Falls
+    // back to the active kiosk for older single-kiosk setups.
+    const kiosk = await resolveKiosk(req.body.kioskId);
     if (!kiosk) return res.status(500).json({ error: "No active kiosk." });
 
     const { code } = req.body;
@@ -444,23 +460,33 @@ async function claimOnly(req, res) {
     const settings = await getSettings(kiosk.id);
     const codeHash = codeSvc.hashCode(String(code).trim());
 
-    const job = await prisma.job.findFirst({
-      where: { kioskId: kiosk.id, codeHash, state: "CODE_ISSUED" },
-    });
+    // Operator-scoped match: a code is valid if the job belongs to the same
+    // operator as this kiosk. If the kiosk has no operator (legacy), fall back
+    // to matching by kiosk id.
+    const where = kiosk.operatorId
+      ? { operatorId: kiosk.operatorId, codeHash, state: "CODE_ISSUED" }
+      : { kioskId: kiosk.id, codeHash, state: "CODE_ISSUED" };
+
+    const job = await prisma.job.findFirst({ where });
     if (!job) return res.status(404).json({ error: "Invalid or already used code." });
     if (codeSvc.isExpired(job.codeExpiresAt)) {
       await prisma.job.update({ where: { id: job.id }, data: { state: "EXPIRED" } });
       return res.status(400).json({ error: "This code has expired." });
     }
 
+    // Busy check is per physical kiosk (this machine).
     const busy = await prisma.job.findFirst({
       where: { kioskId: kiosk.id, state: "PRINTING" },
     });
     if (busy) return res.status(409).json({ error: settings.busy_message });
 
-    await prisma.job.update({ where: { id: job.id }, data: { state: "PRINTING" } });
+    // Route the job to THIS kiosk for printing (the machine where the code
+    // was entered), even if it was uploaded at another of the operator's kiosks.
+    await prisma.job.update({
+      where: { id: job.id },
+      data: { state: "PRINTING", kioskId: kiosk.id },
+    });
 
-    // The helper will GET /api/jobs/:id/file to fetch the bytes.
     return res.json({
       ok: true,
       jobId: job.id,

@@ -10,7 +10,32 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// A physical kiosk machine. Architecture supports many; v1 runs one.
+// Super admin (you). Manages operators and kiosks.
+model SuperAdmin {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime @default(now())
+}
+
+// Operator = a kiosk owner. Owns one or more kiosks. Codes are valid across
+// all kiosks of the SAME operator, but never across different operators.
+model Operator {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  phone        String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  kiosks       Kiosk[]
+  jobs         Job[]
+}
+
+// A physical kiosk machine. Belongs to an operator.
 model Kiosk {
   id          String   @id @default(uuid())
   name        String
@@ -22,10 +47,15 @@ model Kiosk {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  // Owner. Nullable so pre-existing kiosks (before multi-operator) still load.
+  operatorId  String?
+  operator    Operator? @relation(fields: [operatorId], references: [id])
+
   jobs        Job[]
   settings    Setting[]
 
   @@index([isActive])
+  @@index([operatorId])
 }
 
 // Key-value settings. Global rows have kioskId = null.
@@ -65,6 +95,12 @@ model Job {
   kioskId      String
   kiosk        Kiosk     @relation(fields: [kioskId], references: [id])
 
+  // Owner the job belongs to (derived from the kiosk at upload). Used so a
+  // code is valid across all kiosks of the same operator. Nullable for
+  // pre-existing jobs created before multi-operator.
+  operatorId   String?
+  operator     Operator? @relation(fields: [operatorId], references: [id])
+
   // File handling. Path points to the print-ready file on the server.
   // It is deleted after a successful print; only metadata remains.
   originalName String?
@@ -103,6 +139,7 @@ model Job {
   purgeAfter   DateTime?
 
   @@index([kioskId])
+  @@index([operatorId])
   @@index([state])
   @@index([codeHash])
   @@index([createdAt])

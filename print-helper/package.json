@@ -1,0 +1,9 @@
+{
+  "name": "askkiosk-print-helper",
+  "version": "0.1.0",
+  "private": true,
+  "main": "print-helper.js",
+  "scripts": {
+    "start": "node print-helper.js"
+  }
+}

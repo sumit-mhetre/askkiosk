@@ -1,11 +1,22 @@
-// Axios API helper. In dev, /api proxies to the backend on port 5000.
+// Axios API helper. Uses VITE_API_BASE_URL on deployed envs; falls back to the
+// dev proxy (/api) locally.
 import axios from "axios";
 
-const api = axios.create({ baseURL: "/api" });
+const BASE = (import.meta.env.VITE_API_BASE_URL || "") + "/api";
+const api = axios.create({ baseURL: BASE });
 
-export async function uploadFile(file) {
+// Attach admin token if present (for admin endpoints).
+api.interceptors.request.use((config) => {
+  const t = localStorage.getItem("askkiosk_admin_token");
+  if (t) config.headers.Authorization = "Bearer " + t;
+  return config;
+});
+
+// ---- Customer (phone) flow ----
+export async function uploadFile(file, kioskId) {
   const form = new FormData();
   form.append("file", file);
+  if (kioskId) form.append("kioskId", kioskId);
   const { data } = await api.post("/jobs/upload", form, {
     headers: { "Content-Type": "multipart/form-data" },
   });
@@ -37,15 +48,14 @@ export async function getStatus(jobId) {
   return data;
 }
 
-export async function kioskClaim(code) {
-  const { data } = await api.post("/kiosk/claim", { code });
+// ---- Kiosk flow ----
+export async function kioskClaim(code, kioskId) {
+  const { data } = await api.post("/kiosk/claim", { code, kioskId });
   return data;
 }
 
-// Helper-driven flow: claim only (backend won't try to print), then the
-// kiosk page asks the local print helper to do the actual print.
-export async function kioskClaimOnly(code) {
-  const { data } = await api.post("/kiosk/claim-only", { code });
+export async function kioskClaimOnly(code, kioskId) {
+  const { data } = await api.post("/kiosk/claim-only", { code, kioskId });
   return data;
 }
 
@@ -56,6 +66,33 @@ export async function reportPrintResult(jobId, ok, error) {
 
 export async function kioskInfo() {
   const { data } = await api.get("/kiosk/info");
+  return data;
+}
+
+// ---- Admin (super admin) ----
+export async function adminLogin(email, password) {
+  const { data } = await api.post("/admin/login", { email, password });
+  return data;
+}
+
+export async function listOperators() {
+  const { data } = await api.get("/admin/operators");
+  return data;
+}
+
+export async function createOperator(payload) {
+  const { data } = await api.post("/admin/operators", payload);
+  return data;
+}
+
+export async function listKiosks(operatorId) {
+  const q = operatorId ? `?operatorId=${operatorId}` : "";
+  const { data } = await api.get("/admin/kiosks" + q);
+  return data;
+}
+
+export async function createKiosk(payload) {
+  const { data } = await api.post("/admin/kiosks", payload);
   return data;
 }
 

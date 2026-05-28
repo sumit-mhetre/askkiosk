@@ -12,7 +12,11 @@ export default function KioskScreen() {
   const [result, setResult] = useState(null); // { ok, message }
 
   // The phone web app URL. The QR points to the site root.
-  const phoneUrl = window.location.origin + "/";
+  // This kiosk's own ID, from the URL (?kiosk=ID). Used so the QR points to
+  // this kiosk and the claim is scoped to this kiosk's operator.
+  const myKioskId = new URLSearchParams(window.location.search).get("kiosk") || "";
+  const phoneUrl =
+    window.location.origin + "/" + (myKioskId ? `?kiosk=${myKioskId}` : "");
 
   function press(d) {
     setCode((prev) => (prev.length >= 6 ? prev : prev + d));
@@ -27,7 +31,7 @@ export default function KioskScreen() {
     try {
       // Mark the job ready to print. The local print agent (Windows/Android)
       // picks it up, prints it, and reports the result back to the backend.
-      const claim = await kioskClaimOnly(code);
+      const claim = await kioskClaimOnly(code, myKioskId);
       setResult({
         ok: true,
         message: "Sent to printer. Please collect your document from the slot.",

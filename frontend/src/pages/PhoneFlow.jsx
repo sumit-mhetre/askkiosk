@@ -25,6 +25,10 @@ export default function PhoneFlow() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  // The kiosk this customer is using, read from the QR URL (?kiosk=ID).
+  // This ties the job (and thus the code) to the right operator.
+  const kioskId = new URLSearchParams(window.location.search).get("kiosk") || "";
+
   const [jobId, setJobId] = useState(null);
   const [pageCount, setPageCount] = useState(0);
   const [fileName, setFileName] = useState("");
@@ -77,7 +81,7 @@ export default function PhoneFlow() {
     setBusy(true);
     try {
       setFileName(file.name);
-      const res = await uploadFile(file);
+      const res = await uploadFile(file, kioskId);
       setJobId(res.jobId);
       if (res.encrypted) {
         setStep(STEP.UNLOCK);

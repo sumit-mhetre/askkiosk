@@ -6,6 +6,8 @@ const crypto = require("crypto");
 const { UPLOAD_DIR } = require("../services/fileService");
 const job = require("../controllers/jobController");
 const settings = require("../controllers/settingsController");
+const admin = require("../controllers/adminController");
+const { requireRole } = require("../services/authService");
 
 const router = express.Router();
 
@@ -51,5 +53,12 @@ router.get("/agent/next-job", job.agentNextJob);
 // Admin settings
 router.get("/settings", settings.listSettings);
 router.put("/settings", settings.updateSetting);
+
+// Super admin: login is open; the rest require an admin token.
+router.post("/admin/login", admin.adminLogin);
+router.post("/admin/operators", requireRole("admin"), admin.createOperator);
+router.get("/admin/operators", requireRole("admin"), admin.listOperators);
+router.post("/admin/kiosks", requireRole("admin"), admin.createKiosk);
+router.get("/admin/kiosks", requireRole("admin"), admin.listKiosks);
 
 module.exports = router;
