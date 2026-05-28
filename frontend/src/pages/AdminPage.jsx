@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import {
-  adminLogin,
   listOperators,
   createOperator,
   listKiosks,
@@ -13,15 +13,19 @@ import {
 const APP_BASE = window.location.origin;
 
 export default function AdminPage() {
-  const [token, setToken] = useState(
-    localStorage.getItem("askkiosk_admin_token") || ""
-  );
-  if (!token) return <Login onLogin={setToken} />;
+  const nav = useNavigate();
+  const [token] = useState(localStorage.getItem("askkiosk_admin_token") || "");
+
+  useEffect(() => {
+    if (!token) nav("/login");
+  }, [token, nav]);
+
+  if (!token) return null;
   return (
     <Dashboard
       onLogout={() => {
         localStorage.removeItem("askkiosk_admin_token");
-        setToken("");
+        nav("/login");
       }}
     />
   );
@@ -51,64 +55,6 @@ function Brand({ light }) {
 function errText(e, fallback) {
   return (
     (e && e.response && e.response.data && e.response.data.error) || fallback
-  );
-}
-
-/* ---------- login ---------- */
-
-function Login({ onLogin }) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  async function submit() {
-    setBusy(true);
-    setError("");
-    try {
-      const res = await adminLogin(email, password);
-      localStorage.setItem("askkiosk_admin_token", res.token);
-      onLogin(res.token);
-    } catch (e) {
-      setError(errText(e, "Login failed."));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="login-wrap">
-      <div className="login-card fade-up">
-        <Brand />
-        <div className="brand-line mt-3 mb-6" />
-        <h1 className="font-display text-2xl font-bold">Admin sign in</h1>
-        <p className="text-muted text-sm mt-1 mb-6">
-          Manage operators, kiosks and pricing.
-        </p>
-        <label className="lbl">Email</label>
-        <input
-          className="input mb-4"
-          placeholder="admin@askkiosk.local"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && submit()}
-        />
-        <label className="lbl">Password</label>
-        <input
-          className="input"
-          type="password"
-          placeholder="Your password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && submit()}
-        />
-        {error && <p className="text-danger text-sm mt-3">{error}</p>}
-        <button className="btn btn-primary mt-6" onClick={submit} disabled={busy}>
-          {busy ? "Signing in..." : "Sign in"}
-        </button>
-      </div>
-      <p className="login-foot">ASK Kiosk - Self Service Print Stations</p>
-    </div>
   );
 }
 
