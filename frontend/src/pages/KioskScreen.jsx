@@ -16,7 +16,7 @@ export default function KioskScreen() {
   // this kiosk and the claim is scoped to this kiosk's operator.
   const myKioskId = new URLSearchParams(window.location.search).get("kiosk") || "";
   const phoneUrl =
-    window.location.origin + "/" + (myKioskId ? `?kiosk=${myKioskId}` : "");
+    window.location.origin + "/print" + (myKioskId ? `?kiosk=${myKioskId}` : "");
 
   function press(d) {
     setCode((prev) => (prev.length >= 6 ? prev : prev + d));

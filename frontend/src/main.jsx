@@ -7,9 +7,10 @@ import KioskScreen from "./pages/KioskScreen.jsx";
 import AdminPage from "./pages/AdminPage.jsx";
 
 const router = createBrowserRouter([
-  { path: "/", element: <PhoneFlow /> }, // customer phone web app (QR opens this)
-  { path: "/kiosk", element: <KioskScreen /> }, // the tablet kiosk screen
-  { path: "/admin", element: <AdminPage /> }, // super admin: operators, kiosks, QR
+  { path: "/", element: <AdminPage /> },          // login + admin dashboard
+  { path: "/admin", element: <AdminPage /> },      // same admin (alias)
+  { path: "/print", element: <PhoneFlow /> },      // customer upload (QR opens this)
+  { path: "/kiosk", element: <KioskScreen /> },    // kiosk screen on the tablet
 ]);
 
 ReactDOM.createRoot(document.getElementById("root")).render(

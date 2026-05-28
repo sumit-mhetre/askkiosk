@@ -250,20 +250,42 @@ function AddKiosk({ operators, onAdded }) {
 
 function KioskList({ kiosks }) {
   if (!kiosks.length) return null;
+  function copy(text) {
+    try {
+      navigator.clipboard.writeText(text);
+    } catch (e) {}
+  }
   return (
     <Section title="Kiosks and QR Codes">
       <div className="grid sm:grid-cols-2 gap-4">
         {kiosks.map((k) => {
-          const url = `${APP_BASE}/?kiosk=${k.id}`;
+          const customerUrl = `${APP_BASE}/print?kiosk=${k.id}`;
+          const screenUrl = `${APP_BASE}/kiosk?kiosk=${k.id}`;
           return (
             <div key={k.id} className="border border-line rounded-xl p-4 text-center">
               <div className="font-semibold">{k.name}</div>
               <div className="text-muted text-sm mb-1">{k.location || ""}</div>
               <div className="text-muted text-xs mb-3">Operator: {k.operatorName}</div>
               <div className="bg-white inline-block p-2 rounded-lg border border-line">
-                <QRCodeSVG value={url} size={150} />
+                <QRCodeSVG value={customerUrl} size={150} />
               </div>
-              <div className="text-muted text-xs mt-2 break-all">{url}</div>
+              <div className="mt-3 space-y-1">
+                <button
+                  className="btn btn-ghost w-full text-sm py-2"
+                  onClick={() => copy(customerUrl)}
+                >
+                  Copy Customer Link
+                </button>
+                <a
+                  className="btn btn-ghost w-full text-sm py-2"
+                  href={screenUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open Kiosk Screen
+                </a>
+              </div>
+              <div className="text-muted text-xs mt-2 break-all">{customerUrl}</div>
               <div className="text-muted text-xs mt-1">Kiosk ID: {k.id}</div>
             </div>
           );

@@ -32,7 +32,10 @@ async function uploadFile(req, res) {
     if (!req.file) return res.status(400).json({ error: "No file uploaded." });
 
     const kiosk = await resolveKiosk(req.body.kioskId);
-    if (!kiosk) return res.status(500).json({ error: "No active kiosk." });
+    if (!kiosk)
+      return res.status(400).json({
+        error: "Please scan a kiosk QR code to start. No kiosk selected.",
+      });
 
     const settings = await getSettings(kiosk.id);
     const sizeMb = req.file.size / (1024 * 1024);

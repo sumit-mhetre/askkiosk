@@ -1,4 +1,5 @@
-// Seed: one kiosk plus global default settings.
+// Seed: global default settings only. No default kiosk is created;
+// kiosks are added from the admin page.
 const { PrismaClient } = require("@prisma/client");
 const { DEFAULT_SETTINGS } = require("../src/lib/defaultSettings");
 
@@ -18,20 +19,10 @@ async function upsertSetting(key, value, kioskId) {
 }
 
 async function main() {
-  let kiosk = await prisma.kiosk.findFirst();
-  if (!kiosk) {
-    kiosk = await prisma.kiosk.create({
-      data: { name: "ASK Kiosk 01", location: "Pilot location", printerPort: 9100 },
-    });
-    console.log("Created kiosk:", kiosk.id);
-  } else {
-    console.log("Kiosk already exists:", kiosk.id);
-  }
-
   for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
     await upsertSetting(key, value, null);
   }
-  console.log("Seeded", Object.keys(DEFAULT_SETTINGS).length, "global settings.");
+  console.log("Seeded", Object.keys(DEFAULT_SETTINGS).length, "global settings (no default kiosk).");
 }
 
 main()
