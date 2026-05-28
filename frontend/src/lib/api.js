@@ -13,12 +13,17 @@ api.interceptors.request.use((config) => {
 });
 
 // ---- Customer (phone) flow ----
-export async function uploadFile(file, kioskId) {
+export async function uploadFile(file, kioskId, onProgress) {
   const form = new FormData();
   form.append("file", file);
   if (kioskId) form.append("kioskId", kioskId);
   const { data } = await api.post("/jobs/upload", form, {
     headers: { "Content-Type": "multipart/form-data" },
+    onUploadProgress: (e) => {
+      if (onProgress && e.total) {
+        onProgress(Math.round((e.loaded * 100) / e.total));
+      }
+    },
   });
   return data;
 }

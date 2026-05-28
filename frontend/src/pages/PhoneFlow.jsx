@@ -23,6 +23,7 @@ const STEP = {
 export default function PhoneFlow() {
   const [step, setStep] = useState(STEP.UPLOAD);
   const [busy, setBusy] = useState(false);
+  const [uploadPct, setUploadPct] = useState(0);
   const [error, setError] = useState("");
 
   // The kiosk this customer is using, read from the QR URL (?kiosk=ID).
@@ -78,10 +79,11 @@ export default function PhoneFlow() {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
     setError("");
+    setUploadPct(0);
     setBusy(true);
     try {
       setFileName(file.name);
-      const res = await uploadFile(file, kioskId);
+      const res = await uploadFile(file, kioskId, (pct) => setUploadPct(pct));
       setJobId(res.jobId);
       if (res.encrypted) {
         setStep(STEP.UNLOCK);
@@ -185,19 +187,41 @@ export default function PhoneFlow() {
               title="Print Your Documents"
               subtitle="Upload a PDF or image to begin"
             />
-            <label className="btn btn-primary cursor-pointer">
-              Choose File
-              <input
-                type="file"
-                accept="application/pdf,image/*"
-                className="hidden"
-                onChange={handleFile}
-                disabled={busy}
-              />
-            </label>
-            <p className="text-center text-muted text-xs mt-3">
-              PDF or image, up to the kiosk limit.
-            </p>
+            {busy ? (
+              <div className="text-center py-6">
+                <Spinner />
+                <p className="mt-4 font-semibold">
+                  {uploadPct > 0 && uploadPct < 100
+                    ? `Uploading... ${uploadPct}%`
+                    : "Reading your file..."}
+                </p>
+                {uploadPct > 0 && (
+                  <div className="w-full bg-bg rounded-full h-2 mt-3 overflow-hidden">
+                    <div
+                      className="h-2 rounded-full transition-all"
+                      style={{ width: `${uploadPct}%`, background: "#1E73E8" }}
+                    />
+                  </div>
+                )}
+                <p className="text-muted text-xs mt-3">Please wait a moment.</p>
+              </div>
+            ) : (
+              <>
+                <label className="btn btn-primary cursor-pointer">
+                  Choose File
+                  <input
+                    type="file"
+                    accept="application/pdf,image/*"
+                    className="hidden"
+                    onChange={handleFile}
+                    disabled={busy}
+                  />
+                </label>
+                <p className="text-center text-muted text-xs mt-3">
+                  PDF or image, up to the kiosk limit.
+                </p>
+              </>
+            )}
             <ErrorNote>{error}</ErrorNote>
           </>
         )}
