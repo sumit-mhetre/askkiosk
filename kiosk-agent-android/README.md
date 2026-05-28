@@ -39,6 +39,22 @@ The Setup screen appears automatically the first time. Fill in:
 Tap "Test Printer Connection" to confirm the tablet can reach the printer.
 Then tap "Save and Start". The kiosk screen loads and printing is automatic.
 
+
+## Auto-Detect Printer (new)
+
+On the Setup screen there is now an "Auto-Detect Printer" button. Tap it and
+the app scans the WiFi network for printers (using Android Network Service
+Discovery / mDNS). Detected printers are listed; the first one auto-fills the
+IP, and you can tap the list to use it.
+
+If auto-detect finds nothing (some printers do not advertise themselves, or
+the feature is off in the printer settings), just type the IP manually in the
+Printer IP field. Auto-detect is a convenience; manual entry always works.
+
+Note: auto-detect must be tested on the real tablet + real printer. Whether
+the HP Smart Tank 589 appears depends on it advertising the _pdl-datastream
+or _ipp service on the network. If it does not show up, use manual IP.
+
 ## Change settings later
 
 Long-press anywhere on the kiosk screen to reopen the Setup screen. Change the
