@@ -1,9 +1,7 @@
 // Axios API helper. In dev, /api proxies to the backend on port 5000.
 import axios from "axios";
 
-const api = axios.create({
-  baseURL: (import.meta.env.VITE_API_BASE_URL || "") + "/api",
-});
+const api = axios.create({ baseURL: "/api" });
 
 export async function uploadFile(file) {
   const form = new FormData();
@@ -41,6 +39,18 @@ export async function getStatus(jobId) {
 
 export async function kioskClaim(code) {
   const { data } = await api.post("/kiosk/claim", { code });
+  return data;
+}
+
+// Helper-driven flow: claim only (backend won't try to print), then the
+// kiosk page asks the local print helper to do the actual print.
+export async function kioskClaimOnly(code) {
+  const { data } = await api.post("/kiosk/claim-only", { code });
+  return data;
+}
+
+export async function reportPrintResult(jobId, ok, error) {
+  const { data } = await api.post(`/jobs/${jobId}/print-result`, { ok, error });
   return data;
 }
 

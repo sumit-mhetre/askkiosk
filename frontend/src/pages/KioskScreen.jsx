@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Logo } from "../components/UI.jsx";
-import { kioskClaim } from "../lib/api.js";
+import { kioskClaimOnly } from "../lib/api.js";
 
 const VIEW = { HOME: "home", RESULT: "result" };
 
@@ -15,22 +15,28 @@ export default function KioskScreen() {
   const phoneUrl = window.location.origin + "/";
 
   function press(d) {
-    if (code.length >= 6) return;
-    setCode(code + d);
+    setCode((prev) => (prev.length >= 6 ? prev : prev + d));
   }
   function backspace() {
-    setCode(code.slice(0, -1));
+    setCode((prev) => prev.slice(0, -1));
   }
 
   async function submit() {
     if (code.length < 4) return;
     setBusy(true);
     try {
-      const res = await kioskClaim(code);
-      setResult({ ok: true, message: res.message || "Printing your document." });
+      // Mark the job ready to print. The local print agent (Windows/Android)
+      // picks it up, prints it, and reports the result back to the backend.
+      const claim = await kioskClaimOnly(code);
+      setResult({
+        ok: true,
+        message: "Sent to printer. Please collect your document from the slot.",
+        jobId: claim.jobId,
+      });
     } catch (err) {
       const msg =
         (err && err.response && err.response.data && err.response.data.error) ||
+        err.message ||
         "Could not print. Please try again.";
       setResult({ ok: false, message: msg });
     } finally {

@@ -198,20 +198,15 @@ async function markPaidAndIssueCode(jobId, paymentId, method) {
     Date.now() + settings.metadata_retention_days * 86400000
   );
 
- // Only set gatewayPaymentId if it is not already taken (avoids unique clash
-  // from double-fire of verify + webhook, and from repeated mock ids).
-  const paymentData = { status: "SUCCESS" };
-  if (method) paymentData.method = method;
-  if (paymentId) {
-    const clash = await prisma.payment.findUnique({
-      where: { gatewayPaymentId: paymentId },
-    });
-    if (!clash) paymentData.gatewayPaymentId = paymentId;
-  }
   await prisma.payment.update({
     where: { jobId: job.id },
-    data: paymentData,
+    data: {
+      status: "SUCCESS",
+      gatewayPaymentId: paymentId || undefined,
+      method: method || undefined,
+    },
   });
+
   await prisma.job.update({
     where: { id: job.id },
     data: {
@@ -434,6 +429,166 @@ async function jobStatus(req, res) {
   });
 }
 
+// POST /api/kiosk/claim-only  { code }
+// Like claimAndPrint, but does NOT try to print server-side. Used when a
+// local print helper (laptop or Android) does the actual printing.
+// Returns { jobId, fileUrl } so the helper can fetch the file.
+async function claimOnly(req, res) {
+  try {
+    const kiosk = await getActiveKiosk();
+    if (!kiosk) return res.status(500).json({ error: "No active kiosk." });
+
+    const { code } = req.body;
+    if (!code) return res.status(400).json({ error: "Code required." });
+
+    const settings = await getSettings(kiosk.id);
+    const codeHash = codeSvc.hashCode(String(code).trim());
+
+    const job = await prisma.job.findFirst({
+      where: { kioskId: kiosk.id, codeHash, state: "CODE_ISSUED" },
+    });
+    if (!job) return res.status(404).json({ error: "Invalid or already used code." });
+    if (codeSvc.isExpired(job.codeExpiresAt)) {
+      await prisma.job.update({ where: { id: job.id }, data: { state: "EXPIRED" } });
+      return res.status(400).json({ error: "This code has expired." });
+    }
+
+    const busy = await prisma.job.findFirst({
+      where: { kioskId: kiosk.id, state: "PRINTING" },
+    });
+    if (busy) return res.status(409).json({ error: settings.busy_message });
+
+    await prisma.job.update({ where: { id: job.id }, data: { state: "PRINTING" } });
+
+    // The helper will GET /api/jobs/:id/file to fetch the bytes.
+    return res.json({
+      ok: true,
+      jobId: job.id,
+      fileUrl: `/api/jobs/${job.id}/file`,
+    });
+  } catch (e) {
+    console.error("claimOnly error:", e);
+    return res.status(500).json({ error: "Claim failed." });
+  }
+}
+
+// GET /api/jobs/:id/file
+// Streams the print-ready file. Only allowed while job is PRINTING (i.e.
+// the code has just been claimed). The helper consumes this once.
+async function fetchJobFile(req, res) {
+  try {
+    const job = await prisma.job.findUnique({ where: { id: req.params.id } });
+    if (!job) return res.status(404).json({ error: "Job not found." });
+    if (job.state !== "PRINTING") {
+      return res.status(403).json({ error: "Job not ready for printing." });
+    }
+    if (!job.filePath) {
+      return res.status(410).json({ error: "File no longer available." });
+    }
+    const fs = require("fs");
+    if (!fs.existsSync(job.filePath)) {
+      return res.status(410).json({ error: "File missing on server." });
+    }
+    res.setHeader(
+      "Content-Type",
+      job.fileType || "application/octet-stream"
+    );
+    res.setHeader("Cache-Control", "no-store");
+    fs.createReadStream(job.filePath).pipe(res);
+  } catch (e) {
+    console.error("fetchJobFile error:", e);
+    return res.status(500).json({ error: "Could not fetch file." });
+  }
+}
+
+// POST /api/jobs/:id/print-result  { ok, error? }
+// The print helper calls this after attempting to print, so the backend can
+// finalize the state machine (PRINTED_OK or auto-refund + FAILED_REFUNDED).
+async function reportPrintResult(req, res) {
+  try {
+    const job = await prisma.job.findUnique({ where: { id: req.params.id } });
+    if (!job) return res.status(404).json({ error: "Job not found." });
+    if (job.state !== "PRINTING") {
+      return res.status(400).json({ error: "Job not in PRINTING state." });
+    }
+
+    const ok = !!req.body.ok;
+    if (ok) {
+      fileSvc.deleteFile(job.filePath);
+      await prisma.job.update({
+        where: { id: job.id },
+        data: {
+          state: "PRINTED_OK",
+          filePath: null,
+          fileDeleted: true,
+          printedAt: new Date(),
+        },
+      });
+      return res.json({ ok: true });
+    }
+
+    // Helper reports failure -> auto-refund and clean up.
+    const payment = await prisma.payment.findUnique({ where: { jobId: job.id } });
+    let refunded = false;
+    if (payment && payment.gatewayPaymentId) {
+      try {
+        const r = await rzp.refundPayment(payment.gatewayPaymentId, job.amount);
+        await prisma.payment.update({
+          where: { jobId: job.id },
+          data: { status: "REFUNDED", refundId: r.id, refundedAt: new Date() },
+        });
+        refunded = true;
+      } catch (e) {
+        console.error("refund failed:", e);
+      }
+    }
+    fileSvc.deleteFile(job.filePath);
+    await prisma.job.update({
+      where: { id: job.id },
+      data: { state: "FAILED_REFUNDED", filePath: null, fileDeleted: true },
+    });
+    return res.json({ ok: false, refunded, error: req.body.error || null });
+  } catch (e) {
+    console.error("reportPrintResult error:", e);
+    return res.status(500).json({ error: "Report failed." });
+  }
+}
+
+// GET /api/agent/next-job?kioskId=...
+// The local print agent (Windows/Android) polls this. Returns the next job
+// in PRINTING state for this kiosk, with a file URL to download. Returns
+// { job: null } when nothing is waiting.
+async function agentNextJob(req, res) {
+  try {
+    let kioskId = req.query.kioskId;
+    if (!kioskId) {
+      const kiosk = await getActiveKiosk();
+      kioskId = kiosk ? kiosk.id : null;
+    }
+    if (!kioskId) return res.json({ job: null });
+
+    const job = await prisma.job.findFirst({
+      where: { kioskId, state: "PRINTING", fileDeleted: false },
+      orderBy: { updatedAt: "asc" },
+    });
+    if (!job) return res.json({ job: null });
+
+    return res.json({
+      job: {
+        id: job.id,
+        copies: job.copies,
+        mode: job.mode,
+        doubleSided: job.doubleSided,
+        fileType: job.fileType,
+        fileUrl: `/api/jobs/${job.id}/file`,
+      },
+    });
+  } catch (e) {
+    console.error("agentNextJob error:", e);
+    return res.status(500).json({ error: "Agent poll failed." });
+  }
+}
+
 module.exports = {
   uploadFile,
   unlockJob,
@@ -442,5 +597,9 @@ module.exports = {
   verifyPayment,
   razorpayWebhook,
   claimAndPrint,
+  claimOnly,
+  fetchJobFile,
+  reportPrintResult,
+  agentNextJob,
   jobStatus,
 };

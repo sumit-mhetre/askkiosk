@@ -40,7 +40,13 @@ router.get("/jobs/:id/status", job.jobStatus);
 
 // Kiosk flow
 router.post("/kiosk/claim", job.claimAndPrint);
+router.post("/kiosk/claim-only", job.claimOnly);
 router.get("/kiosk/info", settings.kioskInfo);
+
+// Print helper / agent endpoints
+router.get("/jobs/:id/file", job.fetchJobFile);
+router.post("/jobs/:id/print-result", job.reportPrintResult);
+router.get("/agent/next-job", job.agentNextJob);
 
 // Admin settings
 router.get("/settings", settings.listSettings);
