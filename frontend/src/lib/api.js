@@ -101,4 +101,15 @@ export async function createKiosk(payload) {
   return data;
 }
 
+// ---- Settings (global) ----
+export async function getSettings() {
+  const { data } = await api.get("/settings");
+  return data;
+}
+
+export async function updateSetting(key, value) {
+  const { data } = await api.put("/settings", { key, value });
+  return data;
+}
+
 export default api;

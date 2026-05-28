@@ -13,6 +13,7 @@ export default {
       },
       fontFamily: {
         sans: ["Manrope", "system-ui", "sans-serif"],
+        display: ["Sora", "Manrope", "system-ui", "sans-serif"],
       },
     },
   },
