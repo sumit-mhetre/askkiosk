@@ -101,14 +101,15 @@ export async function createKiosk(payload) {
   return data;
 }
 
-// ---- Settings (global) ----
-export async function getSettings() {
-  const { data } = await api.get("/settings");
+// ---- Settings (per-kiosk; pass kioskId. For global, omit it.) ----
+export async function getSettings(kioskId) {
+  const q = kioskId ? `?kioskId=${kioskId}` : "";
+  const { data } = await api.get("/settings" + q);
   return data;
 }
 
-export async function updateSetting(key, value) {
-  const { data } = await api.put("/settings", { key, value });
+export async function updateSetting(key, value, kioskId) {
+  const { data } = await api.put("/settings", { key, value, kioskId });
   return data;
 }
 

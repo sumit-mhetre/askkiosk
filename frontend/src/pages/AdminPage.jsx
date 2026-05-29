@@ -114,7 +114,6 @@ function Dashboard({ onLogout }) {
           {[
             ["kiosks", "Kiosks & QR"],
             ["operators", "Operators"],
-            ["settings", "Pricing & Settings"],
           ].map(([id, label]) => (
             <button
               key={id}
@@ -139,12 +138,6 @@ function Dashboard({ onLogout }) {
           <div className="fade-up">
             <AddKiosk operators={operators} onAdded={refresh} />
             <KioskList kiosks={kiosks} />
-          </div>
-        )}
-
-        {tab === "settings" && (
-          <div className="fade-up">
-            <SettingsEditor />
           </div>
         )}
       </main>
@@ -309,6 +302,7 @@ function AddKiosk({ operators, onAdded }) {
 
 function KioskList({ kiosks }) {
   const [copied, setCopied] = useState("");
+  const [editing, setEditing] = useState(null); // kiosk object being edited
   function copy(text, id) {
     try {
       navigator.clipboard.writeText(text);
@@ -318,6 +312,20 @@ function KioskList({ kiosks }) {
   }
   if (!kiosks.length)
     return <Empty>No kiosks yet. Add one above and its QR appears here.</Empty>;
+
+  if (editing) {
+    return (
+      <Panel
+        title={`Settings: ${editing.name}`}
+        desc={`These settings apply only to this kiosk. Operator: ${editing.operatorName || "-"}`}
+      >
+        <button className="mini-btn mb-4" style={{ maxWidth: 220 }} onClick={() => setEditing(null)}>
+          &larr; Back to all kiosks
+        </button>
+        <SettingsEditor kioskId={editing.id} />
+      </Panel>
+    );
+  }
 
   return (
     <Panel title="Kiosks & QR codes" desc="Print each QR for its kiosk. Open the screen link on that kiosk's tablet.">
@@ -350,6 +358,9 @@ function KioskList({ kiosks }) {
                 <a className="mini-btn" href={screenUrl} target="_blank" rel="noreferrer">
                   Open kiosk screen
                 </a>
+                <button className="mini-btn mini-btn-primary" onClick={() => setEditing(k)}>
+                  Settings
+                </button>
               </div>
 
               <details className="kiosk-meta">
@@ -383,7 +394,7 @@ const LIMIT_FIELDS = [
   ["code_expiry_minutes", "Code expiry (minutes)", ""],
 ];
 
-function SettingsEditor() {
+function SettingsEditor({ kioskId }) {
   const [settings, setSettings] = useState(null);
   const [draft, setDraft] = useState({});
   const [msg, setMsg] = useState("");
@@ -391,7 +402,7 @@ function SettingsEditor() {
 
   async function load() {
     try {
-      const s = await getSettings();
+      const s = await getSettings(kioskId);
       setSettings(s);
       setDraft(s);
     } catch (e) {
@@ -400,7 +411,7 @@ function SettingsEditor() {
   }
   useEffect(() => {
     load();
-  }, []);
+  }, [kioskId]);
 
   async function saveField(key) {
     setBusy(true);
@@ -408,7 +419,7 @@ function SettingsEditor() {
     try {
       let v = draft[key];
       if (!isNaN(parseFloat(v)) && isFinite(v)) v = parseFloat(v);
-      const updated = await updateSetting(key, v);
+      const updated = await updateSetting(key, v, kioskId);
       setSettings(updated);
       setMsg("Saved " + key.replace(/_/g, " ") + ".");
     } catch (e) {
@@ -456,7 +467,7 @@ function SettingsEditor() {
       <Group title="Pricing" fields={PRICE_FIELDS} />
       <Group title="Limits & codes" fields={LIMIT_FIELDS} />
       <p className="text-muted text-xs">
-        Changes apply to all kiosks. Each value saves individually.
+        These settings apply only to this kiosk. Each value saves individually.
       </p>
     </>
   );

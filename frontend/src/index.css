@@ -297,3 +297,7 @@ body {
 @media (max-width:480px){
   .lp-steps { grid-template-columns:1fr; }
 }
+
+.mini-btn-primary { background:#0F1115; color:#fff; border-color:#0F1115; }
+.mini-btn-primary:hover { background:#1b1e25; border-color:#1b1e25; }
+.mb-4 { margin-bottom:16px; }
