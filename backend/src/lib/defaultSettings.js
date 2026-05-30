@@ -29,6 +29,11 @@ const DEFAULT_SETTINGS = {
   busy_message: "Kiosk is printing another job. Please wait a moment.",
   support_contact: "",
 
+  // Multi-file (uploading several files in one job)
+  multi_file_enabled: true, // turn the feature on/off per kiosk
+  multi_file_max: 10, // max files per batch
+  multi_file_mode: "shared", // "shared" (one config for all) or "per_file" (each file own config)
+
   // Data retention for job metadata (files are deleted right after print)
   metadata_retention_days: 14,
 };

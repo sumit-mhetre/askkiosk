@@ -101,7 +101,16 @@ model Job {
   operatorId   String?
   operator     Operator? @relation(fields: [operatorId], references: [id])
 
-  // File handling. Path points to the print-ready file on the server.
+  // Multi-file mode for this batch. "single" = legacy single-file (use the
+  // columns above). "shared" = several files, all sharing the same settings
+  // (the columns above apply to every file). "per_file" = several files, each
+  // with its own settings stored on its JobFile row.
+  multiMode    String    @default("single")
+  files        JobFile[]
+
+  // File handling. For "single" mode the columns below hold the only file.
+  // For "shared" and "per_file" they may also hold the FIRST file's metadata
+  // for backward-compatible access, but the canonical list is in `files`.
   // It is deleted after a successful print; only metadata remains.
   originalName String?
   fileType     String? // application/pdf, image/jpeg, etc
@@ -143,6 +152,42 @@ model Job {
   @@index([state])
   @@index([codeHash])
   @@index([createdAt])
+}
+
+// One file inside a multi-file job. For single-file jobs this is not used
+// (the file lives on the Job columns). For shared/per_file modes there is
+// one JobFile per uploaded file. In "per_file" mode each row carries its own
+// settings (copies, mode, doubleSided, pageRange).
+model JobFile {
+  id           String    @id @default(uuid())
+  jobId        String
+  job          Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  // Order in the batch (1-based). The print agent prints files in this order.
+  position     Int       @default(1)
+
+  originalName String?
+  fileType     String?
+  filePath     String?
+  fileDeleted  Boolean   @default(false)
+
+  pageCount    Int       @default(0)
+
+  // Per-file settings. In "shared" mode these mirror the job-level values;
+  // in "per_file" mode they may differ.
+  copies       Int       @default(1)
+  mode         PrintMode @default(BW)
+  doubleSided  Boolean   @default(false)
+  pageRange    String?
+  sheetCount   Int       @default(0)
+
+  // Pricing snapshot per file (rupees).
+  amount       Float     @default(0)
+
+  createdAt    DateTime  @default(now())
+
+  @@index([jobId])
+  @@index([jobId, position])
 }
 
 enum PaymentStatus {
