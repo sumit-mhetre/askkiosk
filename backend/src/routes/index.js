@@ -39,6 +39,12 @@ router.post(
   upload.array("files", 20), // hard cap; settings.multi_file_max applies per kiosk
   job.uploadMultiple
 );
+router.post(
+  "/jobs/:id/add-files",
+  upload.array("files", 20),
+  job.appendFiles
+);
+router.delete("/jobs/:id/file/:fileId", job.deleteJobFile);
 router.post("/jobs/:id/file/:fileId/unlock", job.unlockJobFile);
 router.post("/jobs/:id/configure-multi", job.configureMulti);
 router.post("/jobs/:id/unlock", job.unlockJob);

@@ -305,6 +305,151 @@ async function configureMulti(req, res) {
   }
 }
 
+// POST /api/jobs/:id/add-files  (multipart: files[])
+// Append more files to an existing CREATED-state multi-file job. Enforces
+// the per-kiosk max_files setting (total files across the batch).
+async function appendFiles(req, res) {
+  try {
+    const files = req.files || [];
+    if (!files.length) {
+      return res.status(400).json({ error: "No files uploaded." });
+    }
+
+    const job = await prisma.job.findUnique({
+      where: { id: req.params.id },
+      include: { files: true },
+    });
+    if (!job) {
+      for (const f of files) fileSvc.deleteFile(f.path);
+      return res.status(404).json({ error: "Job not found." });
+    }
+    if (job.state !== "CREATED") {
+      for (const f of files) fileSvc.deleteFile(f.path);
+      return res
+        .status(400)
+        .json({ error: "Files can only be added before payment." });
+    }
+    if (job.multiMode === "single") {
+      for (const f of files) fileSvc.deleteFile(f.path);
+      return res
+        .status(400)
+        .json({ error: "This job does not support multiple files." });
+    }
+
+    const settings = await getSettings(job.kioskId);
+    const maxFiles = Number(settings.multi_file_max) || 10;
+    const existingCount = job.files.length;
+    if (existingCount + files.length > maxFiles) {
+      for (const f of files) fileSvc.deleteFile(f.path);
+      return res
+        .status(400)
+        .json({ error: `Max ${maxFiles} files per batch. You already have ${existingCount}.` });
+    }
+
+    // Validate sizes.
+    for (const f of files) {
+      const sizeMb = f.size / (1024 * 1024);
+      if (sizeMb > settings.max_file_size_mb) {
+        for (const ff of files) fileSvc.deleteFile(ff.path);
+        return res.status(400).json({
+          error: `"${f.originalname}" is too large. Max ${settings.max_file_size_mb} MB per file.`,
+        });
+      }
+    }
+
+    // Inspect and append each file as a new JobFile row.
+    const nextPosition = (existingCount > 0
+      ? Math.max(...job.files.map((f) => f.position || 1))
+      : 0) + 1;
+    const added = [];
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const info = await fileSvc.inspectFile(f.path, f.mimetype);
+      const jobFile = await prisma.jobFile.create({
+        data: {
+          jobId: job.id,
+          position: nextPosition + i,
+          originalName: f.originalname,
+          fileType: f.mimetype,
+          filePath: f.path,
+          pageCount: info.ok ? info.pageCount : 0,
+        },
+      });
+      added.push({
+        id: jobFile.id,
+        position: jobFile.position,
+        name: f.originalname,
+        fileType: f.mimetype,
+        pageCount: info.ok ? info.pageCount : 0,
+        encrypted: !info.ok && !!info.encrypted,
+        ok: !!info.ok,
+        error: info.ok ? null : info.error || null,
+      });
+    }
+
+    // Recompute parent total pages.
+    const all = await prisma.jobFile.findMany({ where: { jobId: job.id } });
+    const totalPages = all.reduce((s, f) => s + (f.pageCount || 0), 0);
+    await prisma.job.update({
+      where: { id: job.id },
+      data: { pageCount: totalPages },
+    });
+
+    return res.json({
+      jobId: job.id,
+      added,
+      needsUnlock: added.some((f) => f.encrypted),
+    });
+  } catch (e) {
+    console.error("appendFiles error:", e);
+    return res.status(500).json({ error: "Adding files failed." });
+  }
+}
+
+// DELETE /api/jobs/:id/file/:fileId
+// Remove one file from a multi-file job before payment.
+async function deleteJobFile(req, res) {
+  try {
+    const job = await prisma.job.findUnique({
+      where: { id: req.params.id },
+      include: { files: true },
+    });
+    if (!job) return res.status(404).json({ error: "Job not found." });
+    if (job.state !== "CREATED")
+      return res
+        .status(400)
+        .json({ error: "Files can only be removed before payment." });
+
+    const target = job.files.find((f) => f.id === req.params.fileId);
+    if (!target) return res.status(404).json({ error: "File not found." });
+
+    // Delete the file on disk and the JobFile row.
+    if (target.filePath) fileSvc.deleteFile(target.filePath);
+    await prisma.jobFile.delete({ where: { id: target.id } });
+
+    const remaining = await prisma.jobFile.findMany({
+      where: { jobId: job.id },
+      orderBy: { position: "asc" },
+    });
+
+    // Recompute parent page count.
+    const totalPages = remaining.reduce((s, f) => s + (f.pageCount || 0), 0);
+    await prisma.job.update({
+      where: { id: job.id },
+      data: { pageCount: totalPages },
+    });
+
+    return res.json({
+      ok: true,
+      remaining: remaining.length,
+      pageCount: totalPages,
+    });
+  } catch (e) {
+    console.error("deleteJobFile error:", e);
+    return res.status(500).json({ error: "Could not remove file." });
+  }
+}
+
 // POST /api/jobs/upload  (multipart: file, body: kioskId)
 // Inspects the file, returns pageCount or an encrypted flag.
 async function uploadFile(req, res) {
@@ -968,4 +1113,6 @@ module.exports = {
   uploadMultiple,
   unlockJobFile,
   configureMulti,
+  appendFiles,
+  deleteJobFile,
 };

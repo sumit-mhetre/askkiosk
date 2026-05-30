@@ -557,3 +557,28 @@ body {
 
 .lp2-hero-text { position:relative; z-index:1; }
 
+
+/* file list X + add-more on PhoneFlow */
+.file-x {
+  width:28px; height:28px; border-radius:50%;
+  border:1px solid #E5E7EB; background:#fff; color:#6B7280;
+  font-size:18px; line-height:1; cursor:pointer; flex:none;
+  display:flex; align-items:center; justify-content:center;
+  transition: background .15s, color .15s, border-color .15s, transform .08s;
+}
+.file-x:hover { background:#FEE2E2; color:#B91C1C; border-color:#FCA5A5; }
+.file-x:active { transform: scale(0.92); }
+.file-x:disabled { opacity:.4; cursor:not-allowed; }
+
+.add-more {
+  display:flex; align-items:center; justify-content:center; gap:8px;
+  border:1px dashed #cfd4da; border-radius:12px; padding:12px;
+  cursor:pointer; font-weight:700; color:#1E73E8; font-size:14px;
+  transition: background .15s, border-color .15s;
+}
+.add-more:hover { background:#F0F6FF; border-color:#1E73E8; }
+.add-more.is-busy { opacity:.65; cursor:wait; }
+.add-more-plus {
+  width:22px; height:22px; border-radius:50%; background:#1E73E8; color:#fff;
+  display:flex; align-items:center; justify-content:center; font-weight:800;
+}

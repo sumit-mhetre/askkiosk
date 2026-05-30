@@ -10,6 +10,8 @@ import {
   verifyPayment,
   getStatus,
   kioskInfo,
+  appendFilesToJob,
+  deleteJobFile,
 } from "../lib/api.js";
 import { openCheckout } from "../lib/razorpay.js";
 import {
@@ -168,6 +170,80 @@ export default function PhoneFlow() {
       delete c[fileId];
       return c;
     });
+  }
+
+  // Remove a file from the batch on the server, then update local state.
+  // If the removed file was the last one, return to UPLOAD step.
+  async function handleRemoveFile(fileId) {
+    if (multiMode === "single") return; // can't remove the only file in single mode
+    setError("");
+    setBusy(true);
+    try {
+      await deleteJobFile(jobId, fileId);
+      const next = files.filter((x) => x.id !== fileId);
+      removeFile(fileId);
+      if (next.length === 0) {
+        // empty batch -> restart from UPLOAD
+        setJobId(null);
+        setFiles([]);
+        setPerFile({});
+        setMultiMode("single");
+        setTotalAmount(0);
+        setTotalSheets(0);
+        setStep(STEP.UPLOAD);
+        return;
+      }
+      if (multiMode === "per_file") {
+        const pfNext = { ...perFile };
+        delete pfNext[fileId];
+        recalcPerFile(next, pfNext);
+      } else {
+        recalcShared(next, copies, mode, doubleSided);
+      }
+    } catch (e) {
+      setError(errMsg(e) || "Could not remove file.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Append more files to the existing job from the CONFIG step.
+  async function handleAddMoreFiles(e) {
+    const fileList = Array.from(e.target.files || []);
+    // reset the input so the same file can be reselected later
+    e.target.value = "";
+    if (!fileList.length || !jobId) return;
+    setError("");
+    setUploadPct(0);
+    setBusy(true);
+    try {
+      const cap = kInfo?.multi?.max || 10;
+      if (files.length + fileList.length > cap) {
+        throw new Error(`Maximum ${cap} files per batch.`);
+      }
+      const res = await appendFilesToJob(jobId, fileList, (p) => setUploadPct(p));
+      const newOnes = (res.added || []).map((f) => ({ ...f }));
+      const merged = [...files, ...newOnes];
+      setFiles(merged);
+      // initialize per-file defaults for the new files
+      const pfNext = { ...perFile };
+      newOnes.forEach((f) => {
+        if (!pfNext[f.id]) pfNext[f.id] = { copies: 1, mode: "BW", doubleSided: false };
+      });
+      setPerFile(pfNext);
+      // handle encrypted new files
+      if (newOnes.some((f) => f.encrypted)) {
+        setStep(STEP.UNLOCK);
+      } else {
+        if (multiMode === "per_file") recalcPerFile(merged, pfNext);
+        else recalcShared(merged, copies, mode, doubleSided);
+      }
+    } catch (err) {
+      setError(errMsg(err) || "Could not add files.");
+    } finally {
+      setBusy(false);
+      setUploadPct(0);
+    }
   }
 
   // ----- Unlock handlers -----
@@ -461,26 +537,49 @@ export default function PhoneFlow() {
                     <div className="font-semibold truncate">{f.name}</div>
                     <div className="text-muted text-xs">{f.pageCount} page{f.pageCount === 1 ? "" : "s"}</div>
                   </div>
-                  {files.length > 1 && multiMode !== "single" && (
+                  {multiMode !== "single" && (
                     <button
-                      className="text-muted text-xs hover:text-red-600"
-                      onClick={() => {
-                        const next = files.filter((x) => x.id !== f.id);
-                        removeFile(f.id);
-                        if (multiMode === "per_file") {
-                          const pfNext = { ...perFile };
-                          delete pfNext[f.id];
-                          recalcPerFile(next, pfNext);
-                        } else {
-                          recalcShared(next, copies, mode, doubleSided);
-                        }
-                      }}
+                      className="file-x"
+                      title="Remove this file"
+                      onClick={() => handleRemoveFile(f.id)}
+                      disabled={busy}
+                      aria-label="Remove file"
                     >
-                      Remove
+                      ×
                     </button>
                   )}
                 </div>
               ))}
+
+              {/* Add more files (only when multi-file is enabled and under cap) */}
+              {kInfo?.multi?.enabled && multiMode !== "single" && (
+                <div className="mt-3">
+                  {files.length < (kInfo?.multi?.max || 10) ? (
+                    <label className={"add-more " + (busy ? "is-busy" : "")}>
+                      {busy && uploadPct > 0 ? (
+                        <span>Uploading... {uploadPct}%</span>
+                      ) : (
+                        <>
+                          <span className="add-more-plus">+</span>
+                          <span>Add another file</span>
+                        </>
+                      )}
+                      <input
+                        type="file"
+                        accept="application/pdf,image/*"
+                        multiple
+                        className="hidden"
+                        onChange={handleAddMoreFiles}
+                        disabled={busy}
+                      />
+                    </label>
+                  ) : (
+                    <p className="text-muted text-xs text-center">
+                      Maximum {kInfo.multi.max} files reached.
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
 
             {multiMode === "per_file" ? (

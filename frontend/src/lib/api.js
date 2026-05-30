@@ -56,6 +56,25 @@ export async function configureMulti(jobId, payload) {
   return data;
 }
 
+export async function appendFilesToJob(jobId, files, onProgress) {
+  const form = new FormData();
+  for (const f of files) form.append("files", f);
+  const { data } = await api.post(`/jobs/${jobId}/add-files`, form, {
+    headers: { "Content-Type": "multipart/form-data" },
+    onUploadProgress: (e) => {
+      if (onProgress && e.total) {
+        onProgress(Math.round((e.loaded * 100) / e.total));
+      }
+    },
+  });
+  return data;
+}
+
+export async function deleteJobFile(jobId, fileId) {
+  const { data } = await api.delete(`/jobs/${jobId}/file/${fileId}`);
+  return data;
+}
+
 export async function unlockJob(jobId, password) {
   const { data } = await api.post(`/jobs/${jobId}/unlock`, { password });
   return data;
