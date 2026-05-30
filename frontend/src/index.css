@@ -301,3 +301,6 @@ body {
 .mini-btn-primary { background:#0F1115; color:#fff; border-color:#0F1115; }
 .mini-btn-primary:hover { background:#1b1e25; border-color:#1b1e25; }
 .mb-4 { margin-bottom:16px; }
+
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.animate-spin { animation: spin 0.8s linear infinite; }

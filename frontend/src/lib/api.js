@@ -28,6 +28,34 @@ export async function uploadFile(file, kioskId, onProgress) {
   return data;
 }
 
+// Upload multiple files in one batch.
+export async function uploadFiles(files, kioskId, onProgress) {
+  const form = new FormData();
+  for (const f of files) form.append("files", f);
+  if (kioskId) form.append("kioskId", kioskId);
+  const { data } = await api.post("/jobs/upload-multi", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+    onUploadProgress: (e) => {
+      if (onProgress && e.total) {
+        onProgress(Math.round((e.loaded * 100) / e.total));
+      }
+    },
+  });
+  return data;
+}
+
+export async function unlockJobFile(jobId, fileId, password) {
+  const { data } = await api.post(`/jobs/${jobId}/file/${fileId}/unlock`, {
+    password,
+  });
+  return data;
+}
+
+export async function configureMulti(jobId, payload) {
+  const { data } = await api.post(`/jobs/${jobId}/configure-multi`, payload);
+  return data;
+}
+
 export async function unlockJob(jobId, password) {
   const { data } = await api.post(`/jobs/${jobId}/unlock`, { password });
   return data;
@@ -69,8 +97,9 @@ export async function reportPrintResult(jobId, ok, error) {
   return data;
 }
 
-export async function kioskInfo() {
-  const { data } = await api.get("/kiosk/info");
+export async function kioskInfo(kioskId) {
+  const q = kioskId ? `?kioskId=${kioskId}` : "";
+  const { data } = await api.get("/kiosk/info" + q);
   return data;
 }
 

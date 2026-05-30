@@ -1,99 +1,157 @@
-import React, { useState, useEffect } from "react";
-import { Logo, StepHeader, ErrorNote } from "../components/UI.jsx";
+import React, { useEffect, useState } from "react";
 import {
   uploadFile,
+  uploadFiles,
   unlockJob,
+  unlockJobFile,
   configureJob,
+  configureMulti,
   createPayment,
   verifyPayment,
   getStatus,
+  kioskInfo,
 } from "../lib/api.js";
-import { loadRazorpayScript, openCheckout } from "../lib/razorpay.js";
+import { openCheckout } from "../lib/razorpay.js";
+import {
+  Logo,
+  Spinner,
+  StepHeader,
+  ErrorNote,
+  PrimaryButton,
+  GhostButton,
+} from "../components/UI.jsx";
 
 const STEP = {
-  UPLOAD: "upload",
-  UNLOCK: "unlock",
-  CONFIG: "config",
-  PAYING: "paying",
-  CODE: "code",
-  PRINTED: "printed",
-  REFUNDED: "refunded",
+  LOADING: "LOADING",
+  UPLOAD: "UPLOAD",
+  UNLOCK: "UNLOCK", // password-protected PDFs
+  CONFIG: "CONFIG",
+  PAYING: "PAYING",
+  CODE: "CODE",
+  PRINTED: "PRINTED",
+  REFUNDED: "REFUNDED",
 };
 
 export default function PhoneFlow() {
-  const [step, setStep] = useState(STEP.UPLOAD);
+  const [step, setStep] = useState(STEP.LOADING);
   const [busy, setBusy] = useState(false);
   const [uploadPct, setUploadPct] = useState(0);
   const [error, setError] = useState("");
 
-  // The kiosk this customer is using, read from the QR URL (?kiosk=ID).
-  // This ties the job (and thus the code) to the right operator.
   const kioskId = new URLSearchParams(window.location.search).get("kiosk") || "";
+  const [kInfo, setKInfo] = useState(null); // { multi: {enabled,max,mode}, limits: {...} }
 
+  // Job-level state
   const [jobId, setJobId] = useState(null);
-  const [pageCount, setPageCount] = useState(0);
-  const [fileName, setFileName] = useState("");
-  const [password, setPassword] = useState("");
+  const [multiMode, setMultiMode] = useState("single"); // single | shared | per_file
+  const [files, setFiles] = useState([]); // [{id, name, pageCount, encrypted, ...settings}]
+  const [unlockingFileId, setUnlockingFileId] = useState(null);
+  const [unlockPassword, setUnlockPassword] = useState("");
 
+  // Shared-mode config (used when multiMode === "shared")
   const [copies, setCopies] = useState(1);
-  const [mode, setMode] = useState("BW");
+  const [mode, setMode] = useState("BW"); // BW or COLOR
   const [doubleSided, setDoubleSided] = useState(false);
-  const [priceInfo, setPriceInfo] = useState(null);
 
+  // Per-file overrides keyed by fileId (used when multiMode === "per_file")
+  const [perFile, setPerFile] = useState({}); // { [fileId]: { copies, mode, doubleSided } }
+
+  // Pricing
+  const [totalAmount, setTotalAmount] = useState(0);
+  const [totalSheets, setTotalSheets] = useState(0);
+
+  // Code
   const [code, setCode] = useState("");
 
-  // Poll job status while on the CODE screen so the phone knows when the
-  // kiosk has actually printed (or refunded), and updates the view itself.
+  // Load kiosk info up-front so we know if multi-file is enabled.
+  useEffect(() => {
+    (async () => {
+      try {
+        const info = await kioskInfo(kioskId);
+        setKInfo(info);
+        setStep(STEP.UPLOAD);
+      } catch (e) {
+        setError(errMsg(e) || "Could not contact kiosk.");
+        setStep(STEP.UPLOAD); // still show upload UI; error visible
+      }
+    })();
+  }, [kioskId]);
+
+  // Poll job status after code is shown, until printed or failed.
   useEffect(() => {
     if (step !== STEP.CODE || !jobId) return;
-    let stopped = false;
-    const startedAt = Date.now();
-    const MAX_MS = 10 * 60 * 1000; // stop polling after 10 minutes
+    let stop = false;
     const tick = async () => {
-      if (stopped) return;
       try {
         const s = await getStatus(jobId);
-        if (s.state === "PRINTED_OK") {
-          setStep(STEP.PRINTED);
-          return;
-        }
-        if (s.state === "FAILED_REFUNDED") {
+        if (stop) return;
+        if (s.state === "PRINTED_OK") setStep(STEP.PRINTED);
+        else if (s.state === "FAILED_REFUNDED" || s.state === "EXPIRED")
           setStep(STEP.REFUNDED);
-          return;
-        }
       } catch (e) {
-        // ignore transient errors; keep polling
-      }
-      if (Date.now() - startedAt < MAX_MS) {
-        setTimeout(tick, 3000);
+        // ignore poll errors
       }
     };
-    const t = setTimeout(tick, 3000);
+    tick();
+    const id = setInterval(tick, 3000);
+    const stopAt = setTimeout(() => clearInterval(id), 10 * 60 * 1000);
     return () => {
-      stopped = true;
-      clearTimeout(t);
+      stop = true;
+      clearInterval(id);
+      clearTimeout(stopAt);
     };
   }, [step, jobId]);
 
-  async function handleFile(e) {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
+  function errMsg(e) {
+    return (e && e.response && e.response.data && e.response.data.error) || e.message || "";
+  }
+
+  // ----- Upload handlers -----
+  async function handleFiles(e) {
+    const fileList = Array.from(e.target.files || []);
+    if (!fileList.length) return;
     setError("");
     setUploadPct(0);
     setBusy(true);
     try {
-      setFileName(file.name);
-      const res = await uploadFile(file, kioskId, (pct) => setUploadPct(pct));
-      setJobId(res.jobId);
-      if (res.encrypted) {
-        setStep(STEP.UNLOCK);
+      if (kInfo?.multi?.enabled && fileList.length >= 1) {
+        // Multi-file path (works for 1 or more files; backend creates JobFile rows).
+        const cap = kInfo?.multi?.max || 10;
+        if (fileList.length > cap) {
+          throw new Error(`You can upload up to ${cap} files at a time.`);
+        }
+        const res = await uploadFiles(fileList, kioskId, (p) => setUploadPct(p));
+        setJobId(res.jobId);
+        setMultiMode(res.multiMode || "shared");
+        const fl = (res.files || []).map((f) => ({ ...f }));
+        setFiles(fl);
+        // initialize per-file settings to defaults so per_file mode can edit them
+        const pf = {};
+        fl.forEach((f) => { pf[f.id] = { copies: 1, mode: "BW", doubleSided: false }; });
+        setPerFile(pf);
+        if (res.needsUnlock) {
+          setStep(STEP.UNLOCK);
+        } else {
+          setStep(STEP.CONFIG);
+          await recalcShared(fl, 1, "BW", false); // initial preview
+        }
       } else {
-        setPageCount(res.pageCount);
-        // For a single-page file, duplex makes no sense; force single sided.
-        const effDouble = res.pageCount > 1 ? doubleSided : false;
-        if (effDouble !== doubleSided) setDoubleSided(false);
-        setStep(STEP.CONFIG);
-        await recalc(res.jobId, copies, mode, effDouble);
+        // Single-file legacy path (when multi-file disabled for this kiosk).
+        const file = fileList[0];
+        const res = await uploadFile(file, kioskId, (p) => setUploadPct(p));
+        setJobId(res.jobId);
+        setMultiMode("single");
+        if (res.encrypted) {
+          setFiles([{ id: "single", name: file.name, encrypted: true }]);
+          setStep(STEP.UNLOCK);
+        } else {
+          setFiles([{ id: "single", name: file.name, pageCount: res.pageCount }]);
+          // Single page = no duplex
+          const eff = res.pageCount > 1 ? doubleSided : false;
+          if (eff !== doubleSided) setDoubleSided(false);
+          setStep(STEP.CONFIG);
+          await recalcSingle(res.jobId, copies, mode, eff);
+        }
       }
     } catch (err) {
       setError(errMsg(err));
@@ -102,90 +160,203 @@ export default function PhoneFlow() {
     }
   }
 
-  async function handleUnlock() {
+  function removeFile(fileId) {
+    // Removing a file in the new batch: locally only (backend keeps until configure).
+    setFiles((f) => f.filter((x) => x.id !== fileId));
+    setPerFile((p) => {
+      const c = { ...p };
+      delete c[fileId];
+      return c;
+    });
+  }
+
+  // ----- Unlock handlers -----
+  async function submitUnlock() {
     setError("");
     setBusy(true);
     try {
-      const res = await unlockJob(jobId, password);
-      setPageCount(res.pageCount);
-      setPassword("");
-      const effDouble = res.pageCount > 1 ? doubleSided : false;
-      if (effDouble !== doubleSided) setDoubleSided(false);
-      setStep(STEP.CONFIG);
-      await recalc(jobId, copies, mode, effDouble);
+      if (multiMode === "single") {
+        const res = await unlockJob(jobId, unlockPassword);
+        setUnlockPassword("");
+        setFiles([{ id: "single", name: files[0]?.name || "file", pageCount: res.pageCount, encrypted: false }]);
+        const eff = res.pageCount > 1 ? doubleSided : false;
+        if (eff !== doubleSided) setDoubleSided(false);
+        setStep(STEP.CONFIG);
+        await recalcSingle(jobId, copies, mode, eff);
+      } else {
+        const fileId = unlockingFileId;
+        if (!fileId) throw new Error("Pick a file to unlock first.");
+        const res = await unlockJobFile(jobId, fileId, unlockPassword);
+        setUnlockPassword("");
+        setFiles((arr) =>
+          arr.map((f) =>
+            f.id === fileId
+              ? { ...f, pageCount: res.pageCount, encrypted: false }
+              : f
+          )
+        );
+        // If no more encrypted files remain, move on to CONFIG
+        const stillLocked = files.some((f) => f.encrypted && f.id !== fileId);
+        if (!stillLocked) {
+          setStep(STEP.CONFIG);
+          await recalcShared(
+            files.map((f) =>
+              f.id === fileId ? { ...f, pageCount: res.pageCount, encrypted: false } : f
+            ),
+            copies,
+            mode,
+            doubleSided
+          );
+        } else {
+          setUnlockingFileId(null);
+        }
+      }
     } catch (err) {
-      setError(errMsg(err));
+      setError(errMsg(err) || "Wrong password.");
     } finally {
       setBusy(false);
     }
   }
 
-  async function recalc(id, c, m, d) {
+  // ----- Pricing previews -----
+  // Live local preview of pricing while editing config (final price is set on configure).
+  function previewShared(filesLocal, c, m, d) {
+    // sum of (sheetsPerCopy * copies * rate), where sheets = pages or ceil(p/2) for duplex
+    const isColor = m === "COLOR";
+    let sheets = 0;
+    let amount = 0;
+    for (const f of filesLocal) {
+      const pc = f.pageCount || 0;
+      const effDuplex = pc > 1 ? d : false;
+      const persheet = effDuplex
+        ? Math.ceil(pc / 2)
+        : pc;
+      sheets += persheet * c;
+      let cost;
+      if (!effDuplex) {
+        cost = pc * (isColor ? 3 : 1);
+      } else {
+        cost = Math.ceil(pc / 2) * (isColor ? 4.5 : 1.5);
+      }
+      amount += cost * c;
+    }
+    return { sheets, amount: Math.round(amount * 100) / 100 };
+  }
+
+  function previewPerFile(filesLocal, pfMap) {
+    let sheets = 0;
+    let amount = 0;
+    for (const f of filesLocal) {
+      const cfg = pfMap[f.id] || { copies: 1, mode: "BW", doubleSided: false };
+      const pc = f.pageCount || 0;
+      const effDuplex = pc > 1 ? cfg.doubleSided : false;
+      const isColor = cfg.mode === "COLOR";
+      const persheet = effDuplex ? Math.ceil(pc / 2) : pc;
+      sheets += persheet * cfg.copies;
+      let cost;
+      if (!effDuplex) cost = pc * (isColor ? 3 : 1);
+      else cost = Math.ceil(pc / 2) * (isColor ? 4.5 : 1.5);
+      amount += cost * cfg.copies;
+    }
+    return { sheets, amount: Math.round(amount * 100) / 100 };
+  }
+
+  async function recalcSingle(jid, c, m, d) {
     try {
-      const res = await configureJob(id, {
+      const res = await configureJob(jid, {
         copies: c,
         mode: m,
         doubleSided: d,
       });
-      setPriceInfo(res);
-      setError("");
+      setTotalAmount(res.amount);
+      setTotalSheets(res.sheets || 0);
     } catch (err) {
-      setPriceInfo(null);
       setError(errMsg(err));
     }
   }
 
-  function changeConfig(next) {
-    const c = next.copies ?? copies;
-    const m = next.mode ?? mode;
-    const d = next.doubleSided ?? doubleSided;
-    setCopies(c);
-    setMode(m);
-    setDoubleSided(d);
-    if (jobId) recalc(jobId, c, m, d);
+  async function recalcShared(filesLocal, c, m, d) {
+    // Local preview only (no server call) for snappy UI; final amount on Pay & Get Code.
+    const { sheets, amount } = previewShared(filesLocal, c, m, d);
+    setTotalSheets(sheets);
+    setTotalAmount(amount);
   }
 
-  async function handlePay() {
-    if (!priceInfo) return;
+  function recalcPerFile(filesLocal, pfMap) {
+    const { sheets, amount } = previewPerFile(filesLocal, pfMap);
+    setTotalSheets(sheets);
+    setTotalAmount(amount);
+  }
+
+  // ----- Payment -----
+  async function payAndGetCode() {
     setError("");
     setBusy(true);
     setStep(STEP.PAYING);
     try {
-      const order = await createPayment(jobId);
-      if (!order.mock) await loadRazorpayScript();
-      const result = await openCheckout(order);
-      const verify = await verifyPayment(jobId, {
-        paymentId: result.paymentId,
-        signature: result.signature,
-        method: result.method,
-      });
-      if (verify.code) {
-        setCode(verify.code);
+      let configured;
+      if (multiMode === "single") {
+        configured = { amount: totalAmount };
+      } else if (multiMode === "per_file") {
+        configured = await configureMulti(jobId, {
+          files: files.map((f) => ({
+            id: f.id,
+            copies: perFile[f.id]?.copies || 1,
+            mode: perFile[f.id]?.mode || "BW",
+            doubleSided: !!perFile[f.id]?.doubleSided,
+          })),
+        });
+      } else {
+        configured = await configureMulti(jobId, {
+          copies,
+          mode,
+          doubleSided,
+        });
+      }
+      const payment = await createPayment(jobId);
+      const result = await openCheckout(payment);
+      const ver = await verifyPayment(jobId, result);
+      if (ver.code) {
+        setCode(ver.code);
         setStep(STEP.CODE);
       } else {
-        setError("Payment done but code not issued. Please contact support.");
-        setStep(STEP.CONFIG);
+        throw new Error("Payment ok but no code received.");
       }
     } catch (err) {
-      setError(errMsg(err));
+      setError(errMsg(err) || "Payment failed.");
       setStep(STEP.CONFIG);
     } finally {
       setBusy(false);
     }
   }
 
-  return (
-    <div className="min-h-full flex flex-col items-center px-4 py-6 max-w-md mx-auto">
-      <div className="py-4">
+  // ----- Renders -----
+  if (step === STEP.LOADING) {
+    return (
+      <div className="min-h-full flex flex-col items-center justify-center px-4 py-10">
         <Logo />
+        <div className="card p-6 mt-6 text-center">
+          <Spinner />
+          <p className="mt-3 text-muted text-sm">Connecting to the kiosk...</p>
+        </div>
       </div>
+    );
+  }
 
-      <div className="card w-full p-5 mt-2">
+  return (
+    <div className="min-h-full px-4 py-6 max-w-md mx-auto">
+      <Logo />
+
+      <div className="card mt-6 p-5">
         {step === STEP.UPLOAD && (
           <>
             <StepHeader
               title="Print Your Documents"
-              subtitle="Upload a PDF or image to begin"
+              subtitle={
+                kInfo?.multi?.enabled
+                  ? `Upload up to ${kInfo.multi.max} PDF or image files`
+                  : "Upload a PDF or image to begin"
+              }
             />
             {busy ? (
               <div className="text-center py-6">
@@ -208,17 +379,20 @@ export default function PhoneFlow() {
             ) : (
               <>
                 <label className="btn btn-primary cursor-pointer">
-                  Choose File
+                  Choose File{kInfo?.multi?.enabled ? "s" : ""}
                   <input
                     type="file"
                     accept="application/pdf,image/*"
+                    multiple={!!kInfo?.multi?.enabled}
                     className="hidden"
-                    onChange={handleFile}
+                    onChange={handleFiles}
                     disabled={busy}
                   />
                 </label>
                 <p className="text-center text-muted text-xs mt-3">
-                  PDF or image, up to the kiosk limit.
+                  {kInfo?.multi?.enabled
+                    ? `PDF or image, up to ${kInfo.limits?.maxFileSizeMb || 25} MB each.`
+                    : "PDF or image, up to the kiosk limit."}
                 </p>
               </>
             )}
@@ -229,23 +403,45 @@ export default function PhoneFlow() {
         {step === STEP.UNLOCK && (
           <>
             <StepHeader
-              title="Password Protected PDF"
-              subtitle="Enter the password to unlock and print"
+              title="Password Protected"
+              subtitle="Enter the PDF password to continue"
             />
+            {multiMode !== "single" && files.filter((f) => f.encrypted).length > 1 && (
+              <div className="mb-3">
+                <label className="text-xs font-semibold text-muted">Pick a file to unlock:</label>
+                <select
+                  className="input mt-1"
+                  value={unlockingFileId || ""}
+                  onChange={(e) => setUnlockingFileId(e.target.value)}
+                >
+                  <option value="">Select a file</option>
+                  {files
+                    .filter((f) => f.encrypted)
+                    .map((f) => (
+                      <option key={f.id} value={f.id}>{f.name}</option>
+                    ))}
+                </select>
+              </div>
+            )}
             <input
               type="password"
               className="input"
               placeholder="PDF password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              value={unlockPassword}
+              onChange={(e) => setUnlockPassword(e.target.value)}
             />
-            <button
-              className="btn btn-primary mt-4"
-              onClick={handleUnlock}
-              disabled={busy || !password}
+            <PrimaryButton
+              onClick={submitUnlock}
+              disabled={
+                busy ||
+                !unlockPassword ||
+                (multiMode !== "single" &&
+                  files.filter((f) => f.encrypted).length > 1 &&
+                  !unlockingFileId)
+              }
             >
               {busy ? "Unlocking..." : "Unlock"}
-            </button>
+            </PrimaryButton>
             <ErrorNote>{error}</ErrorNote>
           </>
         )}
@@ -253,198 +449,173 @@ export default function PhoneFlow() {
         {step === STEP.CONFIG && (
           <>
             <StepHeader title="Print Options" />
-            <div className="text-sm text-muted mb-1">File</div>
-            <div className="font-semibold truncate mb-4">{fileName}</div>
 
-            <Row label="Pages">
-              <span className="font-semibold">{pageCount}</span>
-            </Row>
-
-            <Row label="Copies">
-              <Stepper
-                value={copies}
-                onChange={(v) => changeConfig({ copies: Math.max(1, v) })}
-              />
-            </Row>
-
-            <div className="my-3">
-              <div className="text-sm text-muted mb-2">Color</div>
-              <div className="grid grid-cols-2 gap-2">
-                <Choice
-                  active={mode === "BW"}
-                  onClick={() => changeConfig({ mode: "BW" })}
+            {/* file list */}
+            <div className="mb-4">
+              {files.map((f) => (
+                <div
+                  key={f.id}
+                  className="flex items-center justify-between gap-2 py-2 border-b border-line text-sm"
                 >
-                  Black &amp; White
-                </Choice>
-                <Choice
-                  active={mode === "COLOR"}
-                  onClick={() => changeConfig({ mode: "COLOR" })}
-                >
-                  Color
-                </Choice>
-              </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold truncate">{f.name}</div>
+                    <div className="text-muted text-xs">{f.pageCount} page{f.pageCount === 1 ? "" : "s"}</div>
+                  </div>
+                  {files.length > 1 && multiMode !== "single" && (
+                    <button
+                      className="text-muted text-xs hover:text-red-600"
+                      onClick={() => {
+                        const next = files.filter((x) => x.id !== f.id);
+                        removeFile(f.id);
+                        if (multiMode === "per_file") {
+                          const pfNext = { ...perFile };
+                          delete pfNext[f.id];
+                          recalcPerFile(next, pfNext);
+                        } else {
+                          recalcShared(next, copies, mode, doubleSided);
+                        }
+                      }}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              ))}
             </div>
 
-            {pageCount > 1 && (
-              <div className="my-3">
-                <div className="text-sm text-muted mb-2">Sides</div>
-                <div className="grid grid-cols-2 gap-2">
-                  <Choice
-                    active={!doubleSided}
-                    onClick={() => changeConfig({ doubleSided: false })}
-                  >
-                    Single Sided
-                  </Choice>
-                  <Choice
-                    active={doubleSided}
-                    onClick={() => changeConfig({ doubleSided: true })}
-                  >
-                    Double Sided
-                  </Choice>
-                </div>
+            {multiMode === "per_file" ? (
+              // Per-file: each file gets its own controls
+              <div className="space-y-4">
+                {files.map((f, i) => {
+                  const cfg = perFile[f.id] || { copies: 1, mode: "BW", doubleSided: false };
+                  const setCfg = (next) => {
+                    const pfNext = { ...perFile, [f.id]: { ...cfg, ...next } };
+                    setPerFile(pfNext);
+                    recalcPerFile(files, pfNext);
+                  };
+                  return (
+                    <div key={f.id} className="border border-line rounded-xl p-3">
+                      <div className="text-xs font-semibold text-muted mb-2 truncate">
+                        File {i + 1}: {f.name}
+                      </div>
+                      <div className="mb-2">
+                        <label className="text-xs text-muted">Copies</label>
+                        <div className="flex items-center gap-2 mt-1">
+                          <GhostButton onClick={() => setCfg({ copies: Math.max(1, cfg.copies - 1) })}>−</GhostButton>
+                          <span className="w-10 text-center font-bold">{cfg.copies}</span>
+                          <GhostButton onClick={() => setCfg({ copies: cfg.copies + 1 })}>+</GhostButton>
+                        </div>
+                      </div>
+                      <div className="mb-2">
+                        <label className="text-xs text-muted">Color</label>
+                        <div className="grid grid-cols-2 gap-2 mt-1">
+                          <button className={"btn " + (cfg.mode === "BW" ? "btn-primary" : "btn-ghost")} onClick={() => setCfg({ mode: "BW" })}>Black & White</button>
+                          <button className={"btn " + (cfg.mode === "COLOR" ? "btn-primary" : "btn-ghost")} onClick={() => setCfg({ mode: "COLOR" })}>Color</button>
+                        </div>
+                      </div>
+                      {f.pageCount > 1 && (
+                        <div>
+                          <label className="text-xs text-muted">Sides</label>
+                          <div className="grid grid-cols-2 gap-2 mt-1">
+                            <button className={"btn " + (!cfg.doubleSided ? "btn-primary" : "btn-ghost")} onClick={() => setCfg({ doubleSided: false })}>Single-sided</button>
+                            <button className={"btn " + (cfg.doubleSided ? "btn-primary" : "btn-ghost")} onClick={() => setCfg({ doubleSided: true })}>Double-sided</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
+            ) : (
+              // Shared: one set of controls for all files
+              <>
+                <div className="mb-3">
+                  <label className="text-xs text-muted">Copies</label>
+                  <div className="flex items-center gap-2 mt-1">
+                    <GhostButton onClick={() => { const n = Math.max(1, copies - 1); setCopies(n); if (multiMode === "single") recalcSingle(jobId, n, mode, doubleSided); else recalcShared(files, n, mode, doubleSided); }}>−</GhostButton>
+                    <span className="w-10 text-center font-bold">{copies}</span>
+                    <GhostButton onClick={() => { const n = copies + 1; setCopies(n); if (multiMode === "single") recalcSingle(jobId, n, mode, doubleSided); else recalcShared(files, n, mode, doubleSided); }}>+</GhostButton>
+                  </div>
+                </div>
+                <div className="mb-3">
+                  <label className="text-xs text-muted">Color</label>
+                  <div className="grid grid-cols-2 gap-2 mt-1">
+                    <button className={"btn " + (mode === "BW" ? "btn-primary" : "btn-ghost")} onClick={() => { setMode("BW"); if (multiMode === "single") recalcSingle(jobId, copies, "BW", doubleSided); else recalcShared(files, copies, "BW", doubleSided); }}>Black & White</button>
+                    <button className={"btn " + (mode === "COLOR" ? "btn-primary" : "btn-ghost")} onClick={() => { setMode("COLOR"); if (multiMode === "single") recalcSingle(jobId, copies, "COLOR", doubleSided); else recalcShared(files, copies, "COLOR", doubleSided); }}>Color</button>
+                  </div>
+                </div>
+                {files.some((f) => (f.pageCount || 0) > 1) && (
+                  <div className="mb-3">
+                    <label className="text-xs text-muted">Sides</label>
+                    <div className="grid grid-cols-2 gap-2 mt-1">
+                      <button className={"btn " + (!doubleSided ? "btn-primary" : "btn-ghost")} onClick={() => { setDoubleSided(false); if (multiMode === "single") recalcSingle(jobId, copies, mode, false); else recalcShared(files, copies, mode, false); }}>Single-sided</button>
+                      <button className={"btn " + (doubleSided ? "btn-primary" : "btn-ghost")} onClick={() => { setDoubleSided(true); if (multiMode === "single") recalcSingle(jobId, copies, mode, true); else recalcShared(files, copies, mode, true); }}>Double-sided</button>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
 
-            <div className="flex items-center justify-between border-t border-line mt-4 pt-4">
-              <span className="text-muted">Total Amount</span>
-              <span className="text-2xl font-extrabold">
-                {priceInfo ? `Rs ${priceInfo.amount}` : "-"}
-              </span>
+            <div className="border-t border-line mt-4 pt-4 flex items-center justify-between">
+              <span className="text-muted text-sm">Total ({totalSheets} sheet{totalSheets === 1 ? "" : "s"})</span>
+              <span className="font-display font-bold text-xl">Rs {totalAmount}</span>
             </div>
-
-            <button
-              className="btn btn-primary mt-4"
-              onClick={handlePay}
-              disabled={busy || !priceInfo}
+            <PrimaryButton
+              onClick={payAndGetCode}
+              disabled={busy || totalAmount <= 0 || files.length === 0}
             >
-              Pay &amp; Get Code
-            </button>
+              {busy ? "Please wait..." : "Pay & Get Code"}
+            </PrimaryButton>
             <ErrorNote>{error}</ErrorNote>
           </>
         )}
 
         {step === STEP.PAYING && (
-          <div className="text-center py-10">
+          <div className="text-center py-6">
             <Spinner />
-            <p className="mt-4 font-semibold">Processing payment...</p>
-            <p className="text-muted text-sm mt-1">Please do not close this page.</p>
+            <p className="mt-3 font-semibold">Opening secure payment...</p>
           </div>
         )}
 
         {step === STEP.CODE && (
-          <div className="text-center">
+          <>
             <StepHeader
               title="Payment Successful"
               subtitle="Enter this code on the kiosk to print"
             />
-            <div className="bg-bg border border-line rounded-2xl py-6 my-2">
-              <div className="text-5xl font-extrabold tracking-[0.3em] pl-[0.3em]">
-                {code}
+            <div className="rounded-xl bg-bg p-4 my-3 text-center">
+              <div className="font-display text-4xl font-extrabold tracking-widest">
+                {code.split("").join(" ")}
               </div>
             </div>
-            <p className="text-muted text-sm mt-3">
+            <p className="text-muted text-sm text-center">
               Go to the kiosk, tap Enter Code, and type the number above.
               Collect your printout from the slot.
             </p>
-            <div className="flex items-center justify-center gap-2 mt-4 text-muted text-xs">
-              <Spinner small />
-              <span>Waiting for kiosk to print...</span>
+            <div className="flex items-center justify-center gap-2 mt-4 text-muted text-sm">
+              <Spinner small /> Waiting for kiosk to print...
             </div>
-          </div>
+          </>
         )}
 
         {step === STEP.PRINTED && (
           <div className="text-center py-4">
-            <div
-              className="mx-auto w-16 h-16 rounded-full flex items-center justify-center text-3xl"
-              style={{ background: "#E7F3EA", color: "#2E9E4F" }}
-            >
-              ✓
-            </div>
-            <p className="font-bold text-lg mt-4">Printed Successfully</p>
-            <p className="text-muted text-sm mt-2 px-2">
-              Your document has been printed. Please collect it from the kiosk slot.
-            </p>
-            <p className="text-muted text-xs mt-3">Thank you for using ASK Kiosk.</p>
+            <StepHeader title="Printed Successfully" subtitle="Thanks for using ASK Kiosk." />
+            <p className="text-muted text-sm">Collect your prints from the kiosk slot.</p>
           </div>
         )}
 
         {step === STEP.REFUNDED && (
           <div className="text-center py-4">
-            <div
-              className="mx-auto w-16 h-16 rounded-full flex items-center justify-center text-3xl"
-              style={{ background: "#FDEAEA", color: "#D33" }}
-            >
-              !
-            </div>
-            <p className="font-bold text-lg mt-4">Print Failed</p>
-            <p className="text-muted text-sm mt-2 px-2">
-              The printer could not complete your job. Your payment has been
-              refunded and will reflect in your account shortly.
-            </p>
-            <p className="text-muted text-xs mt-3">Sorry for the inconvenience.</p>
+            <StepHeader title="Print Failed - Refunded" subtitle="Your money has been refunded." />
+            <p className="text-muted text-sm">If you do not see it back in a few minutes, contact support.</p>
           </div>
         )}
       </div>
 
-      <p className="text-muted text-xs mt-6">Need help? Ask at the counter.</p>
+      <p className="text-center text-muted text-xs mt-4">
+        Need help? Ask at the counter.
+      </p>
     </div>
-  );
-}
-
-function Row({ label, children }) {
-  return (
-    <div className="flex items-center justify-between py-2">
-      <span className="text-muted">{label}</span>
-      {children}
-    </div>
-  );
-}
-
-function Stepper({ value, onChange }) {
-  return (
-    <div className="flex items-center gap-3">
-      <button className="btn btn-ghost px-4 py-1" onClick={() => onChange(value - 1)}>
-        -
-      </button>
-      <span className="font-semibold w-6 text-center">{value}</span>
-      <button className="btn btn-ghost px-4 py-1" onClick={() => onChange(value + 1)}>
-        +
-      </button>
-    </div>
-  );
-}
-
-function Choice({ active, onClick, children }) {
-  return (
-    <button
-      onClick={onClick}
-      className="rounded-xl py-3 text-sm font-semibold border transition"
-      style={{
-        borderColor: active ? "#1E73E8" : "#E5E7EB",
-        background: active ? "#1E73E8" : "#fff",
-        color: active ? "#fff" : "#0F1115",
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-function Spinner({ small }) {
-  const size = small ? "w-4 h-4 border-2" : "w-8 h-8 border-4";
-  return (
-    <div
-      className={`inline-block ${size} rounded-full border-line`}
-      style={{ borderTopColor: "#1E73E8", animation: "spin 0.8s linear infinite" }}
-    />
-  );
-}
-
-function errMsg(err) {
-  return (
-    (err && err.response && err.response.data && err.response.data.error) ||
-    (err && err.message) ||
-    "Something went wrong."
   );
 }

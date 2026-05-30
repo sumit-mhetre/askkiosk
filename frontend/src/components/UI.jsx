@@ -39,3 +39,42 @@ export function ErrorNote({ children }) {
     </div>
   );
 }
+
+export function Spinner({ small }) {
+  const size = small ? 18 : 32;
+  return (
+    <span
+      className="inline-block rounded-full animate-spin"
+      style={{
+        width: size,
+        height: size,
+        border: "3px solid #E5E7EB",
+        borderTopColor: "#1E73E8",
+      }}
+    />
+  );
+}
+
+export function PrimaryButton({ children, onClick, disabled }) {
+  return (
+    <button
+      className="btn btn-primary w-full mt-4"
+      onClick={onClick}
+      disabled={disabled}
+    >
+      {children}
+    </button>
+  );
+}
+
+export function GhostButton({ children, onClick, disabled }) {
+  return (
+    <button
+      className="btn btn-ghost"
+      onClick={onClick}
+      disabled={disabled}
+    >
+      {children}
+    </button>
+  );
+}
