@@ -34,6 +34,13 @@ const upload = multer({
 
 // Customer (phone) flow
 router.post("/jobs/upload", upload.single("file"), job.uploadFile);
+router.post(
+  "/jobs/upload-multi",
+  upload.array("files", 20), // hard cap; settings.multi_file_max applies per kiosk
+  job.uploadMultiple
+);
+router.post("/jobs/:id/file/:fileId/unlock", job.unlockJobFile);
+router.post("/jobs/:id/configure-multi", job.configureMulti);
 router.post("/jobs/:id/unlock", job.unlockJob);
 router.post("/jobs/:id/configure", job.configureJob);
 router.post("/jobs/:id/pay", job.createPayment);

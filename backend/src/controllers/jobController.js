@@ -25,6 +25,286 @@ async function resolveKiosk(kioskId) {
   return getActiveKiosk();
 }
 
+// POST /api/jobs/upload-multi  (multipart: files[], body: kioskId)
+// Accepts one or more files in a single batch. Creates a Job with multiMode
+// of "shared" or "per_file" based on the kiosk setting, plus a JobFile row
+// per uploaded file. Returns the file list with per-file page counts and any
+// encrypted flag (encrypted files must be unlocked individually before pay).
+async function uploadMultiple(req, res) {
+  try {
+    const files = req.files || [];
+    if (!files.length) {
+      return res.status(400).json({ error: "No files uploaded." });
+    }
+
+    const kiosk = await resolveKiosk(req.body.kioskId);
+    if (!kiosk) {
+      // Clean up the uploaded files since we can't proceed.
+      for (const f of files) fileSvc.deleteFile(f.path);
+      return res.status(400).json({
+        error: "Please scan a kiosk QR code to start. No kiosk selected.",
+      });
+    }
+
+    const settings = await getSettings(kiosk.id);
+
+    if (!settings.multi_file_enabled) {
+      for (const f of files) fileSvc.deleteFile(f.path);
+      return res
+        .status(400)
+        .json({ error: "Multiple file uploads are not enabled for this kiosk." });
+    }
+    const maxFiles = Number(settings.multi_file_max) || 10;
+    if (files.length > maxFiles) {
+      for (const f of files) fileSvc.deleteFile(f.path);
+      return res
+        .status(400)
+        .json({ error: `Too many files. Max ${maxFiles} per batch.` });
+    }
+
+    // Validate sizes up-front; reject the whole batch if any single file is over.
+    for (const f of files) {
+      const sizeMb = f.size / (1024 * 1024);
+      if (sizeMb > settings.max_file_size_mb) {
+        for (const ff of files) fileSvc.deleteFile(ff.path);
+        return res.status(400).json({
+          error: `"${f.originalname}" is too large. Max ${settings.max_file_size_mb} MB per file.`,
+        });
+      }
+    }
+
+    const multiMode =
+      settings.multi_file_mode === "per_file" ? "per_file" : "shared";
+
+    // Create the parent Job. Top-level columns mirror the FIRST file for
+    // backward-compatible callers; the canonical per-file data is in JobFile.
+    const first = files[0];
+    const job = await prisma.job.create({
+      data: {
+        kioskId: kiosk.id,
+        operatorId: kiosk.operatorId || null,
+        multiMode,
+        originalName: first.originalname,
+        fileType: first.mimetype,
+        filePath: first.path,
+      },
+    });
+
+    // Inspect each file, create JobFile rows. Collect encrypted info.
+    const fileEntries = [];
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const info = await fileSvc.inspectFile(f.path, f.mimetype);
+      const jobFile = await prisma.jobFile.create({
+        data: {
+          jobId: job.id,
+          position: i + 1,
+          originalName: f.originalname,
+          fileType: f.mimetype,
+          filePath: f.path,
+          pageCount: info.ok ? info.pageCount : 0,
+        },
+      });
+      fileEntries.push({
+        id: jobFile.id,
+        position: jobFile.position,
+        name: f.originalname,
+        fileType: f.mimetype,
+        pageCount: info.ok ? info.pageCount : 0,
+        encrypted: !info.ok && !!info.encrypted,
+        ok: !!info.ok,
+        error: info.ok ? null : info.error || null,
+      });
+    }
+
+    // Update the Job's pageCount to the sum across files (used by pricing snapshots).
+    const totalPages = fileEntries.reduce((s, e) => s + (e.pageCount || 0), 0);
+    await prisma.job.update({
+      where: { id: job.id },
+      data: { pageCount: totalPages },
+    });
+
+    return res.json({
+      jobId: job.id,
+      multiMode,
+      files: fileEntries,
+      needsUnlock: fileEntries.some((f) => f.encrypted),
+    });
+  } catch (e) {
+    console.error("uploadMultiple error:", e);
+    return res.status(500).json({ error: "Upload failed." });
+  }
+}
+
+// POST /api/jobs/:id/file/:fileId/unlock  { password }
+// Unlocks one encrypted PDF in a multi-file batch.
+async function unlockJobFile(req, res) {
+  try {
+    const { password } = req.body;
+    if (!password) return res.status(400).json({ error: "Password required." });
+    const jobFile = await prisma.jobFile.findUnique({
+      where: { id: req.params.fileId },
+    });
+    if (!jobFile || jobFile.jobId !== req.params.id || !jobFile.filePath) {
+      return res.status(404).json({ error: "File not found." });
+    }
+    const result = await fileSvc.unlockPdf(jobFile.filePath, password);
+    if (!result.ok) {
+      return res.status(400).json({ error: result.error || "Wrong password." });
+    }
+    fileSvc.deleteFile(jobFile.filePath);
+    await prisma.jobFile.update({
+      where: { id: jobFile.id },
+      data: { filePath: result.outPath, pageCount: result.pageCount },
+    });
+    // Recompute parent total pages.
+    const all = await prisma.jobFile.findMany({
+      where: { jobId: req.params.id },
+    });
+    const totalPages = all.reduce((s, f) => s + (f.pageCount || 0), 0);
+    await prisma.job.update({
+      where: { id: req.params.id },
+      data: { pageCount: totalPages },
+    });
+    return res.json({ ok: true, pageCount: result.pageCount });
+  } catch (e) {
+    console.error("unlockJobFile error:", e);
+    return res.status(500).json({ error: "Unlock failed." });
+  }
+}
+
+// POST /api/jobs/:id/configure-multi
+// Body for SHARED mode: { copies, mode, doubleSided, pageRange? }
+// Body for PER_FILE mode: { files: [{ id, copies, mode, doubleSided, pageRange? }, ...] }
+// Validates against limits using the SUM of sheets across files, then writes
+// settings to each JobFile and stores the total amount on the parent Job.
+async function configureMulti(req, res) {
+  try {
+    const job = await prisma.job.findUnique({
+      where: { id: req.params.id },
+      include: { files: { orderBy: { position: "asc" } } },
+    });
+    if (!job) return res.status(404).json({ error: "Job not found." });
+    if (job.state !== "CREATED")
+      return res.status(400).json({ error: "Job is not in a configurable state." });
+    if (!job.files.length)
+      return res.status(400).json({ error: "This job has no files." });
+
+    const settings = await getSettings(job.kioskId);
+
+    // Build per-file plans first (so we can validate the combined totals).
+    let plans;
+    if (job.multiMode === "per_file") {
+      const incoming = Array.isArray(req.body.files) ? req.body.files : [];
+      const byId = new Map(incoming.map((x) => [x.id, x]));
+      plans = job.files.map((f) => {
+        const inp = byId.get(f.id) || {};
+        const copies = Math.max(1, parseInt(inp.copies, 10) || 1);
+        const mode = inp.mode === "COLOR" ? "COLOR" : "BW";
+        const doubleSided = !!inp.doubleSided;
+        return {
+          file: f,
+          copies,
+          mode,
+          doubleSided,
+          pageRange: inp.pageRange || null,
+        };
+      });
+    } else {
+      // shared mode: one config applied to all files
+      const copies = Math.max(1, parseInt(req.body.copies, 10) || 1);
+      const mode = req.body.mode === "COLOR" ? "COLOR" : "BW";
+      const doubleSided = !!req.body.doubleSided;
+      plans = job.files.map((f) => ({
+        file: f,
+        copies,
+        mode,
+        doubleSided,
+        pageRange: req.body.pageRange || null,
+      }));
+    }
+
+    // Per-file validation (pageCount must exist, copies cap), then aggregate sheet cap.
+    let totalSheets = 0;
+    let totalAmount = 0;
+    const fileUpdates = [];
+    for (const p of plans) {
+      if (!p.file.pageCount || p.file.pageCount <= 0) {
+        return res.status(400).json({
+          error: `"${p.file.originalName}" has no readable pages.`,
+        });
+      }
+      if (p.copies > settings.max_copies) {
+        return res.status(400).json({
+          error: `Maximum ${settings.max_copies} copies allowed per file.`,
+        });
+      }
+      const sheets =
+        pricing.sheetsForOneCopy(p.file.pageCount, p.doubleSided) * p.copies;
+      totalSheets += sheets;
+      const amount = pricing.computeAmount(
+        {
+          pageCount: p.file.pageCount,
+          copies: p.copies,
+          mode: p.mode,
+          doubleSided: p.doubleSided,
+        },
+        settings
+      );
+      totalAmount += amount;
+      fileUpdates.push({
+        id: p.file.id,
+        data: {
+          copies: p.copies,
+          mode: p.mode,
+          doubleSided: p.doubleSided,
+          pageRange: p.pageRange,
+          sheetCount: sheets,
+          amount,
+        },
+      });
+    }
+
+    if (totalSheets > settings.max_sheets_per_job) {
+      return res.status(400).json({
+        error: `This batch is ${totalSheets} sheets. The maximum per job is ${settings.max_sheets_per_job}. Reduce copies or remove a file.`,
+      });
+    }
+
+    totalAmount = Math.round(totalAmount * 100) / 100;
+
+    // Persist per-file settings and parent totals.
+    for (const u of fileUpdates) {
+      await prisma.jobFile.update({ where: { id: u.id }, data: u.data });
+    }
+    await prisma.job.update({
+      where: { id: job.id },
+      data: {
+        // Mirror the first file's top-level config so legacy code paths still work.
+        copies: fileUpdates[0].data.copies,
+        mode: fileUpdates[0].data.mode,
+        doubleSided: fileUpdates[0].data.doubleSided,
+        pageRange: fileUpdates[0].data.pageRange,
+        sheetCount: totalSheets,
+        amount: totalAmount,
+      },
+    });
+
+    return res.json({
+      ok: true,
+      jobId: job.id,
+      multiMode: job.multiMode,
+      totalSheets,
+      totalAmount,
+      currency: settings.currency || "INR",
+      files: fileUpdates.map((u) => ({ id: u.id, ...u.data })),
+    });
+  } catch (e) {
+    console.error("configureMulti error:", e);
+    return res.status(500).json({ error: "Configure failed." });
+  }
+}
+
 // POST /api/jobs/upload  (multipart: file, body: kioskId)
 // Inspects the file, returns pageCount or an encrypted flag.
 async function uploadFile(req, res) {
@@ -631,4 +911,7 @@ module.exports = {
   reportPrintResult,
   agentNextJob,
   jobStatus,
+  uploadMultiple,
+  unlockJobFile,
+  configureMulti,
 };
