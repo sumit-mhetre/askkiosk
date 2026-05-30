@@ -251,22 +251,36 @@ export default function LandingPage() {
       {/* operator cta */}
       <section className="lp2-op" id="operators">
         <div className="lp2-op-inner">
-          <div className="lp2-op-visual">
-            <img src={kioskHero} alt="ASK Kiosk" />
+          <div className="lp2-badge dark">FOR OPERATORS</div>
+          <h2 className="lp2-h2 lp2-op-h2">
+            Own. Place. <span className="lp2-h1-grad">Earn.</span>
+          </h2>
+          <p className="lp2-sub lp2-op-sub">
+            Place an ASK Kiosk at high-traffic locations, set your prices and
+            start earning passively. We handle the technology.
+          </p>
+
+          <div className="lp2-op-cards">
+            <div className="lp2-op-card">
+              <span className="lp2-op-card-icon"><Icon.pin width={26} height={26} /></span>
+              <div className="lp2-op-card-title">Pick the location</div>
+              <div className="lp2-op-card-desc">Colleges, libraries, offices, shops, transport hubs.</div>
+            </div>
+            <div className="lp2-op-card">
+              <span className="lp2-op-card-icon"><Icon.zap width={26} height={26} /></span>
+              <div className="lp2-op-card-title">Set your prices</div>
+              <div className="lp2-op-card-desc">Per-kiosk rates for B&W, color, single or double sided.</div>
+            </div>
+            <div className="lp2-op-card">
+              <span className="lp2-op-card-icon"><Icon.shield width={26} height={26} /></span>
+              <div className="lp2-op-card-title">We run the rest</div>
+              <div className="lp2-op-card-desc">Payments, codes, refunds, support. You collect earnings.</div>
+            </div>
           </div>
-          <div className="lp2-op-text">
-            <div className="lp2-badge dark">FOR OPERATORS</div>
-            <h2 className="lp2-h2 lp2-h2-left">
-              Own. Place. <span className="lp2-h1-grad">Earn.</span>
-            </h2>
-            <p className="lp2-sub lp2-sub-left">
-              Place an ASK Kiosk at high-traffic locations, set your prices and start earning passively.
-              We handle the technology.
-            </p>
-            <button className="lp2-btn-primary mt-4" onClick={() => nav("/login")}>
-              Operator Login <Icon.arrow width={16} height={16} />
-            </button>
-          </div>
+
+          <button className="lp2-btn-primary lp2-op-cta" onClick={() => nav("/login")}>
+            Operator Login <Icon.arrow width={16} height={16} />
+          </button>
         </div>
       </section>
 
