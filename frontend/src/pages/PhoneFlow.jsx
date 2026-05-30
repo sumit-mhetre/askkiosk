@@ -34,6 +34,9 @@ const STEP = {
   REFUNDED: "REFUNDED",
 };
 
+// Backend origin for direct file links (Preview opens in a new tab).
+const API_ORIGIN = import.meta.env.VITE_API_BASE_URL || "";
+
 export default function PhoneFlow() {
   const [step, setStep] = useState(STEP.LOADING);
   const [busy, setBusy] = useState(false);
@@ -102,6 +105,55 @@ export default function PhoneFlow() {
 
   // Code
   const [code, setCode] = useState("");
+
+  // Local thumbnails: { [fileId]: { url, isImage } }. blob URLs are revoked
+  // when a file is removed or the component unmounts so we don't leak memory.
+  const [thumbs, setThumbs] = useState({});
+  useEffect(() => {
+    return () => {
+      // unmount cleanup
+      Object.values(thumbs).forEach((t) => {
+        if (t && t.url) {
+          try { URL.revokeObjectURL(t.url); } catch (e) {}
+        }
+      });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function addThumbs(fileObjects, fileMetaList) {
+    // fileObjects = native File[]; fileMetaList = [{ id, name, fileType, ... }]
+    setThumbs((prev) => {
+      const next = { ...prev };
+      for (let i = 0; i < fileMetaList.length; i++) {
+        const meta = fileMetaList[i];
+        const native = fileObjects[i];
+        const isImage = (meta.fileType || native?.type || "").startsWith("image/");
+        if (isImage && native) {
+          try {
+            next[meta.id] = { url: URL.createObjectURL(native), isImage: true };
+          } catch (e) {
+            next[meta.id] = { url: null, isImage: true };
+          }
+        } else {
+          next[meta.id] = { url: null, isImage: false };
+        }
+      }
+      return next;
+    });
+  }
+
+  function dropThumb(fileId) {
+    setThumbs((prev) => {
+      const t = prev[fileId];
+      if (t && t.url) {
+        try { URL.revokeObjectURL(t.url); } catch (e) {}
+      }
+      const next = { ...prev };
+      delete next[fileId];
+      return next;
+    });
+  }
 
   // Load kiosk info up-front so we know if multi-file is enabled. If the user
   // refreshed after getting a code, restore the code straight away.
@@ -196,6 +248,7 @@ export default function PhoneFlow() {
         setMultiMode(res.multiMode || "shared");
         const fl = (res.files || []).map((f) => ({ ...f }));
         setFiles(fl);
+        addThumbs(fileList, fl);
         // initialize per-file settings to defaults so per_file mode can edit them
         const pf = {};
         fl.forEach((f) => { pf[f.id] = { copies: 1, mode: "BW", doubleSided: false }; });
@@ -213,10 +266,14 @@ export default function PhoneFlow() {
         setJobId(res.jobId);
         setMultiMode("single");
         if (res.encrypted) {
-          setFiles([{ id: "single", name: file.name, encrypted: true }]);
+          const meta = { id: "single", name: file.name, encrypted: true, fileType: file.type };
+          setFiles([meta]);
+          addThumbs([file], [meta]);
           setStep(STEP.UNLOCK);
         } else {
-          setFiles([{ id: "single", name: file.name, pageCount: res.pageCount }]);
+          const meta = { id: "single", name: file.name, pageCount: res.pageCount, fileType: file.type };
+          setFiles([meta]);
+          addThumbs([file], [meta]);
           // Single page = no duplex
           const eff = res.pageCount > 1 ? doubleSided : false;
           if (eff !== doubleSided) setDoubleSided(false);
@@ -251,6 +308,7 @@ export default function PhoneFlow() {
       await deleteJobFile(jobId, fileId);
       const next = files.filter((x) => x.id !== fileId);
       removeFile(fileId);
+      dropThumb(fileId);
       if (next.length === 0) {
         // empty batch -> restart from UPLOAD
         setJobId(null);
@@ -294,6 +352,7 @@ export default function PhoneFlow() {
       const newOnes = (res.added || []).map((f) => ({ ...f }));
       const merged = [...files, ...newOnes];
       setFiles(merged);
+      addThumbs(fileList, newOnes);
       // initialize per-file defaults for the new files
       const pfNext = { ...perFile };
       newOnes.forEach((f) => {
@@ -598,28 +657,58 @@ export default function PhoneFlow() {
 
             {/* file list */}
             <div className="mb-4">
-              {files.map((f) => (
-                <div
-                  key={f.id}
-                  className="flex items-center justify-between gap-2 py-2 border-b border-line text-sm"
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="font-semibold truncate">{f.name}</div>
-                    <div className="text-muted text-xs">{f.pageCount} page{f.pageCount === 1 ? "" : "s"}</div>
+              {files.map((f) => {
+                const t = thumbs[f.id] || {};
+                const isImage = t.isImage || (f.fileType || "").startsWith("image/");
+                const previewUrl =
+                  multiMode === "single"
+                    ? `${API_ORIGIN}/api/jobs/${jobId}/file`
+                    : `${API_ORIGIN}/api/jobs/${jobId}/file/${f.id}`;
+                return (
+                  <div
+                    key={f.id}
+                    className="flex items-center gap-3 py-2 border-b border-line text-sm"
+                  >
+                    <div className="file-thumb">
+                      {isImage && t.url ? (
+                        <img src={t.url} alt={f.name} />
+                      ) : (
+                        <span className="file-thumb-doc" title="Document">PDF</span>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold truncate">{f.name}</div>
+                      <div className="text-muted text-xs">
+                        {f.pageCount} page{f.pageCount === 1 ? "" : "s"}
+                        {jobId && (
+                          <>
+                            {" "}·{" "}
+                            <a
+                              href={previewUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="file-preview-link"
+                            >
+                              Preview
+                            </a>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    {multiMode !== "single" && (
+                      <button
+                        className="file-x"
+                        title="Remove this file"
+                        onClick={() => handleRemoveFile(f.id)}
+                        disabled={busy}
+                        aria-label="Remove file"
+                      >
+                        ×
+                      </button>
+                    )}
                   </div>
-                  {multiMode !== "single" && (
-                    <button
-                      className="file-x"
-                      title="Remove this file"
-                      onClick={() => handleRemoveFile(f.id)}
-                      disabled={busy}
-                      aria-label="Remove file"
-                    >
-                      ×
-                    </button>
-                  )}
-                </div>
-              ))}
+                );
+              })}
 
               {/* Add more files (only when multi-file is enabled and under cap) */}
               {kInfo?.multi?.enabled && multiMode !== "single" && (
