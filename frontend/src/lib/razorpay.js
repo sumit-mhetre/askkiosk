@@ -15,13 +15,18 @@ export function loadRazorpayScript() {
 
 // order: { orderId, amount, currency, keyId, mock }
 // Returns { paymentId, signature } on success, or { mock:true }.
-export function openCheckout(order) {
+export async function openCheckout(order) {
+  if (order.mock) {
+    // Mock mode: simulate a successful payment instantly.
+    return { mock: true, paymentId: "pay_mock", signature: "sig_mock" };
+  }
+  const loaded = await loadRazorpayScript();
+  if (!loaded || !window.Razorpay) {
+    throw new Error(
+      "Could not load Razorpay. Check your internet connection and try again."
+    );
+  }
   return new Promise((resolve, reject) => {
-    if (order.mock) {
-      // Mock mode: simulate a successful payment instantly with a unique id.
-      const rnd = Math.random().toString(36).slice(2, 12);
-      return resolve({ mock: true, paymentId: "pay_mock_" + rnd, signature: "sig_mock" });
-    }
     const options = {
       key: order.keyId,
       amount: order.amount,
