@@ -43,6 +43,44 @@ export default function PhoneFlow() {
   const kioskId = new URLSearchParams(window.location.search).get("kiosk") || "";
   const [kInfo, setKInfo] = useState(null); // { multi: {enabled,max,mode}, limits: {...} }
 
+  // ---- Persisted code recovery ----
+  // After payment we save { kioskId, jobId, code, savedAt } so a refresh or
+  // browser-restart can re-show the code instead of stranding the customer.
+  // Cleared when the job reaches a final state, or after 1 hour.
+  const STORAGE_KEY = "askkiosk:active_code";
+  const MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
+  function saveActive(jobId, code) {
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ kioskId, jobId, code, savedAt: Date.now() })
+      );
+    } catch (e) {}
+  }
+  function clearActive() {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch (e) {}
+  }
+  function loadActive() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      if (!data || !data.jobId || !data.code) return null;
+      // Different kiosk -> different session, ignore.
+      if (data.kioskId !== kioskId) return null;
+      // Too old -> ignore.
+      if (!data.savedAt || Date.now() - data.savedAt > MAX_AGE_MS) {
+        clearActive();
+        return null;
+      }
+      return data;
+    } catch (e) {
+      return null;
+    }
+  }
+
   // Job-level state
   const [jobId, setJobId] = useState(null);
   const [multiMode, setMultiMode] = useState("single"); // single | shared | per_file
@@ -65,21 +103,48 @@ export default function PhoneFlow() {
   // Code
   const [code, setCode] = useState("");
 
-  // Load kiosk info up-front so we know if multi-file is enabled.
+  // Load kiosk info up-front so we know if multi-file is enabled. If the user
+  // refreshed after getting a code, restore the code straight away.
   useEffect(() => {
     (async () => {
       try {
         const info = await kioskInfo(kioskId);
         setKInfo(info);
-        setStep(STEP.UPLOAD);
       } catch (e) {
         setError(errMsg(e) || "Could not contact kiosk.");
-        setStep(STEP.UPLOAD); // still show upload UI; error visible
       }
+      const saved = loadActive();
+      if (saved) {
+        try {
+          const s = await getStatus(saved.jobId);
+          if (s && s.state === "CODE_ISSUED") {
+            setJobId(saved.jobId);
+            setCode(saved.code);
+            setStep(STEP.CODE);
+            return;
+          }
+          if (s && s.state === "PRINTED_OK") {
+            clearActive();
+            setStep(STEP.PRINTED);
+            return;
+          }
+          if (s && (s.state === "FAILED_REFUNDED" || s.state === "EXPIRED")) {
+            clearActive();
+            setStep(STEP.REFUNDED);
+            return;
+          }
+        } catch (e) {
+          // ignore and fall through to upload
+        }
+        // Status unreadable -> abandon the saved entry.
+        clearActive();
+      }
+      setStep(STEP.UPLOAD);
     })();
   }, [kioskId]);
 
-  // Poll job status after code is shown, until printed or failed.
+  // Poll job status after code is shown, until printed or failed. Also clears
+  // the saved code from localStorage on any terminal state.
   useEffect(() => {
     if (step !== STEP.CODE || !jobId) return;
     let stop = false;
@@ -87,9 +152,13 @@ export default function PhoneFlow() {
       try {
         const s = await getStatus(jobId);
         if (stop) return;
-        if (s.state === "PRINTED_OK") setStep(STEP.PRINTED);
-        else if (s.state === "FAILED_REFUNDED" || s.state === "EXPIRED")
+        if (s.state === "PRINTED_OK") {
+          clearActive();
+          setStep(STEP.PRINTED);
+        } else if (s.state === "FAILED_REFUNDED" || s.state === "EXPIRED") {
+          clearActive();
           setStep(STEP.REFUNDED);
+        }
       } catch (e) {
         // ignore poll errors
       }
@@ -394,6 +463,7 @@ export default function PhoneFlow() {
       const ver = await verifyPayment(jobId, result);
       if (ver.code) {
         setCode(ver.code);
+        saveActive(jobId, ver.code);
         setStep(STEP.CODE);
       } else {
         throw new Error("Payment ok but no code received.");
