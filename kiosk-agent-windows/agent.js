@@ -105,36 +105,137 @@ function downloadFile(url, destPath) {
   });
 }
 
-// Print a file silently on Windows using PowerShell + the default print verb.
-// For PDFs this uses the system default PDF handler's print verb; for images
-// it uses the Windows photo print verb. This prints without a dialog.
-function printWindows(filePath, copies) {
-  return new Promise((resolve, reject) => {
-    // Build a PowerShell command that prints the file silently.
-    // Start-Process -Verb Print sends the file to the default printer.
-    const printerArg = PRINTER_NAME
-      ? `-PrinterName '${PRINTER_NAME.replace(/'/g, "''")}'`
-      : "";
-    // We loop for copies since the Print verb prints one copy.
-    const n = Math.max(1, copies || 1);
-    const ps = [
-      `$ErrorActionPreference='Stop';`,
-      `for ($i=0; $i -lt ${n}; $i++) {`,
-      `  Start-Process -FilePath '${filePath.replace(/'/g, "''")}' -Verb Print ${printerArg} -PassThru | Out-Null;`,
-      `  Start-Sleep -Milliseconds 1500;`,
-      `}`,
-    ].join(" ");
+// ---- Print stack ----
+// We print via SumatraPDF (free, lightweight) because it supports
+// -print-settings flags for color, duplex, copies. PowerShell's silent print
+// could not honour those, so customers paying for color/duplex weren't getting
+// what they paid for.
+//
+// SumatraPDF must be installed on this machine. Defaults search the standard
+// install paths; override with SUMATRA_PATH env var if installed elsewhere.
 
-    execFile(
-      "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-Command", ps],
-      { timeout: 60000 },
-      (err, stdout, stderr) => {
-        if (err) return reject(new Error(stderr || err.message));
-        resolve(true);
-      }
-    );
+const SUMATRA_CANDIDATES = [
+  process.env.SUMATRA_PATH,
+  "C:\\Program Files\\SumatraPDF\\SumatraPDF.exe",
+  "C:\\Program Files (x86)\\SumatraPDF\\SumatraPDF.exe",
+  path.join(
+    process.env.LOCALAPPDATA || "",
+    "SumatraPDF",
+    "SumatraPDF.exe"
+  ),
+].filter(Boolean);
+
+function findSumatra() {
+  for (const p of SUMATRA_CANDIDATES) {
+    try {
+      if (fs.existsSync(p)) return p;
+    } catch (e) {}
+  }
+  return null;
+}
+
+const SUMATRA = findSumatra();
+if (!SUMATRA) {
+  console.warn(
+    "[agent] WARNING: SumatraPDF not found. Install it from sumatrapdfreader.org or set SUMATRA_PATH. Printing will not honour color or duplex settings until this is fixed."
+  );
+} else {
+  console.log("[agent] Using SumatraPDF at:", SUMATRA);
+}
+
+// Convert any image file to a single-page PDF so we can apply the same
+// print-settings flags (color, duplex) uniformly. Returns the PDF path.
+async function imageToPdf(imagePath) {
+  const { PDFDocument } = require("pdf-lib");
+  const bytes = fs.readFileSync(imagePath);
+  const lower = imagePath.toLowerCase();
+  const pdfDoc = await PDFDocument.create();
+  let img;
+  if (lower.endsWith(".png")) {
+    img = await pdfDoc.embedPng(bytes);
+  } else if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
+    img = await pdfDoc.embedJpg(bytes);
+  } else {
+    // Try JPG first, fall back to PNG.
+    try { img = await pdfDoc.embedJpg(bytes); }
+    catch (e) { img = await pdfDoc.embedPng(bytes); }
+  }
+  // Fit the image into an A4 page with a small margin.
+  const pageW = 595.28; // A4 width in points
+  const pageH = 841.89; // A4 height in points
+  const margin = 24;
+  const maxW = pageW - margin * 2;
+  const maxH = pageH - margin * 2;
+  const scale = Math.min(maxW / img.width, maxH / img.height);
+  const drawW = img.width * scale;
+  const drawH = img.height * scale;
+  const page = pdfDoc.addPage([pageW, pageH]);
+  page.drawImage(img, {
+    x: (pageW - drawW) / 2,
+    y: (pageH - drawH) / 2,
+    width: drawW,
+    height: drawH,
   });
+  const out = imagePath.replace(/\.[^.]+$/, "") + "_converted.pdf";
+  const pdfBytes = await pdfDoc.save();
+  fs.writeFileSync(out, pdfBytes);
+  return out;
+}
+
+// Print a PDF via SumatraPDF with explicit color + duplex + copies.
+// opts: { copies, mode: "BW"|"COLOR", doubleSided: bool }
+function printWithSumatra(pdfPath, opts) {
+  return new Promise((resolve, reject) => {
+    if (!SUMATRA) {
+      return reject(
+        new Error(
+          "SumatraPDF is not installed. Install from sumatrapdfreader.org so color and duplex print correctly."
+        )
+      );
+    }
+    const settings = [];
+    settings.push(opts.mode === "COLOR" ? "color" : "monochrome");
+    // duplexlong = flip on long edge (normal portrait duplex)
+    settings.push(opts.doubleSided ? "duplexlong" : "simplex");
+    const n = Math.max(1, parseInt(opts.copies, 10) || 1);
+    settings.push(n + "x"); // Sumatra accepts "Nx" for N copies
+
+    const args = [];
+    if (PRINTER_NAME) {
+      args.push("-print-to", PRINTER_NAME);
+    } else {
+      args.push("-print-to-default");
+    }
+    args.push("-print-settings", settings.join(","));
+    args.push("-silent");
+    args.push(pdfPath);
+
+    execFile(SUMATRA, args, { timeout: 120000 }, (err, stdout, stderr) => {
+      if (err) {
+        return reject(new Error(stderr || err.message || "Sumatra print failed"));
+      }
+      resolve(true);
+    });
+  });
+}
+
+// Unified print entry: routes images through imageToPdf, then prints via Sumatra
+// with the requested color/duplex/copies. Cleans up any temp PDF.
+async function printFile(filePath, opts) {
+  const isImage = /\.(png|jpe?g|gif|webp|bmp)$/i.test(filePath);
+  let toPrint = filePath;
+  let tempPdf = null;
+  if (isImage) {
+    tempPdf = await imageToPdf(filePath);
+    toPrint = tempPdf;
+  }
+  try {
+    await printWithSumatra(toPrint, opts);
+  } finally {
+    if (tempPdf) {
+      try { fs.unlinkSync(tempPdf); } catch (e) {}
+    }
+  }
 }
 
 let working = false;
@@ -207,18 +308,23 @@ async function tick() {
         return;
       }
 
-      // Phase 2: print each file with its own copies count. Any single failure
-      // marks the whole job failed so it gets refunded; partial-print recovery
-      // is not in scope.
+      // Phase 2: print each file with its own settings (color, duplex, copies).
+      // Any single failure marks the whole job failed so it gets refunded;
+      // partial-print recovery is not in scope.
       let printError = null;
       for (const d of downloaded) {
         try {
           console.log(
             "[agent] Printing file " + d.position + ":",
             d.dest,
-            "(copies=" + d.copies + ")"
+            "(copies=" + d.copies + ", mode=" + d.mode +
+              ", duplex=" + (d.doubleSided ? "yes" : "no") + ")"
           );
-          await printWindows(d.dest, d.copies);
+          await printFile(d.dest, {
+            copies: d.copies,
+            mode: d.mode,
+            doubleSided: d.doubleSided,
+          });
         } catch (e) {
           printError = e;
           break;

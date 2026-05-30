@@ -1,7 +1,10 @@
 {
   "name": "askkiosk-windows-agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "main": "agent.js",
-  "scripts": { "start": "node agent.js" }
+  "scripts": { "start": "node agent.js" },
+  "dependencies": {
+    "pdf-lib": "^1.17.1"
+  }
 }

@@ -15,11 +15,30 @@ the agent just prints to whatever is set as the default printer.
 ## One-time setup on the kiosk machine
 
 1. Install Node.js (https://nodejs.org, the LTS version).
-2. Connect your printer to the Windows machine and set it as the
+2. Install SumatraPDF (https://www.sumatrapdfreader.org). This is used to
+   print PDFs with the right color and duplex settings the customer chose.
+   It's free, lightweight (about 10 MB), and silent.
+3. Connect your printer to the Windows machine and set it as the
    DEFAULT printer (Settings > Bluetooth & devices > Printers & scanners >
    pick your printer > Set as default).
-3. Print a test page from Windows to confirm the printer works normally.
-4. Copy the `kiosk-agent-windows` folder onto the machine.
+4. Print a test page from Windows to confirm the printer works normally.
+5. Copy the `kiosk-agent-windows` folder onto the machine.
+6. Open a terminal in the folder and run `npm install` once to install
+   the agent's dependencies (used for image -> PDF conversion).
+
+## What the agent honours
+
+- Number of copies (each file printed N times).
+- Color or Black & White (sent to the printer as a print setting).
+- Single-sided or Double-sided (long-edge duplex when chosen).
+- Each file in a multi-file job uses its own settings.
+
+If the printer doesn't physically support color or duplex, those settings
+are ignored by the hardware. Use a color/duplex-capable printer for the
+real product. The HP Smart Tank 589 supports both.
+
+If SumatraPDF is installed somewhere unusual, set the SUMATRA_PATH env
+var in start-agent.bat before running the agent.
 
 ## Running it
 
