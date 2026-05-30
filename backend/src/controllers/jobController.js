@@ -879,22 +879,75 @@ async function agentNextJob(req, res) {
     const job = await prisma.job.findFirst({
       where: { kioskId, state: "PRINTING", fileDeleted: false },
       orderBy: { updatedAt: "asc" },
+      include: { files: { orderBy: { position: "asc" } } },
     });
     if (!job) return res.json({ job: null });
+
+    // Build a normalized file list the agent loops over. For "single" mode the
+    // file lives on the Job columns; for "shared"/"per_file" it's in JobFile.
+    let files;
+    if (job.multiMode === "single" || !job.files.length) {
+      files = [
+        {
+          id: job.id, // legacy: same as job for single
+          position: 1,
+          fileType: job.fileType,
+          fileUrl: `/api/jobs/${job.id}/file`,
+          copies: job.copies,
+          mode: job.mode,
+          doubleSided: job.doubleSided,
+        },
+      ];
+    } else {
+      files = job.files.map((f) => ({
+        id: f.id,
+        position: f.position,
+        fileType: f.fileType,
+        fileUrl: `/api/jobs/${job.id}/file/${f.id}`,
+        copies: f.copies,
+        mode: f.mode,
+        doubleSided: f.doubleSided,
+      }));
+    }
 
     return res.json({
       job: {
         id: job.id,
+        multiMode: job.multiMode,
+        // legacy top-level fields (still useful for old agents)
         copies: job.copies,
         mode: job.mode,
         doubleSided: job.doubleSided,
         fileType: job.fileType,
-        fileUrl: `/api/jobs/${job.id}/file`,
+        fileUrl: `/api/jobs/${job.id}/file`, // legacy single-file URL
+        files,
       },
     });
   } catch (e) {
     console.error("agentNextJob error:", e);
     return res.status(500).json({ error: "Agent poll failed." });
+  }
+}
+
+// GET /api/jobs/:id/file/:fileId  -> stream one specific file in a multi-file job
+async function fetchOneJobFile(req, res) {
+  try {
+    const file = await prisma.jobFile.findUnique({
+      where: { id: req.params.fileId },
+    });
+    if (!file || file.jobId !== req.params.id)
+      return res.status(404).json({ error: "File not found." });
+    if (!file.filePath)
+      return res.status(410).json({ error: "File no longer available." });
+    const fs = require("fs");
+    if (!fs.existsSync(file.filePath))
+      return res.status(410).json({ error: "File missing on server." });
+    res.setHeader("Content-Type", file.fileType || "application/octet-stream");
+    res.setHeader("Cache-Control", "no-store");
+    fs.createReadStream(file.filePath).pipe(res);
+  } catch (e) {
+    console.error("fetchOneJobFile error:", e);
+    return res.status(500).json({ error: "File fetch failed." });
   }
 }
 
@@ -908,6 +961,7 @@ module.exports = {
   claimAndPrint,
   claimOnly,
   fetchJobFile,
+  fetchOneJobFile,
   reportPrintResult,
   agentNextJob,
   jobStatus,

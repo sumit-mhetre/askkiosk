@@ -147,27 +147,99 @@ async function tick() {
     const res = await getJson(api("/api/agent/next-job" + q));
     if (res && res.job) {
       const job = res.job;
-      console.log("[agent] Job ready:", job.id, "- downloading...");
-      const ext = (job.fileType || "").includes("pdf")
-        ? ".pdf"
-        : (job.fileType || "").includes("png")
-        ? ".png"
-        : ".jpg";
-      const dest = path.join(TMP_DIR, job.id + ext);
-      await downloadFile(api(job.fileUrl), dest);
-      console.log("[agent] Printing", dest);
-      try {
-        await printWindows(dest, job.copies);
+      // Normalize file list. Older backends only return job.fileUrl; newer ones
+      // return job.files. Either way, we iterate.
+      const files =
+        Array.isArray(job.files) && job.files.length
+          ? job.files
+          : [
+              {
+                id: job.id,
+                position: 1,
+                fileType: job.fileType,
+                fileUrl: job.fileUrl,
+                copies: job.copies,
+                mode: job.mode,
+                doubleSided: job.doubleSided,
+              },
+            ];
+      console.log(
+        "[agent] Job ready:",
+        job.id,
+        "- " + files.length + " file(s) to print"
+      );
+
+      // Phase 1: download all files first. If any fails, abort the whole job.
+      const downloaded = [];
+      let dlError = null;
+      for (const f of files) {
+        const ext = (f.fileType || "").includes("pdf")
+          ? ".pdf"
+          : (f.fileType || "").includes("png")
+          ? ".png"
+          : ".jpg";
+        const dest = path.join(TMP_DIR, job.id + "_" + f.position + ext);
+        try {
+          await downloadFile(api(f.fileUrl), dest);
+          downloaded.push({ ...f, dest });
+        } catch (e) {
+          dlError = e;
+          break;
+        }
+      }
+      if (dlError) {
+        console.error(
+          "[agent] Download failed:",
+          dlError.message,
+          "- reporting failure for job",
+          job.id
+        );
+        try {
+          await postJson(api(`/api/jobs/${job.id}/print-result`), {
+            ok: false,
+            error: "download failed: " + dlError.message,
+          });
+        } catch (e2) {
+          console.error("[agent] Could not report failure:", e2.message);
+        }
+        // clean up any partial downloads
+        for (const d of downloaded) fs.unlink(d.dest, () => {});
+        return;
+      }
+
+      // Phase 2: print each file with its own copies count. Any single failure
+      // marks the whole job failed so it gets refunded; partial-print recovery
+      // is not in scope.
+      let printError = null;
+      for (const d of downloaded) {
+        try {
+          console.log(
+            "[agent] Printing file " + d.position + ":",
+            d.dest,
+            "(copies=" + d.copies + ")"
+          );
+          await printWindows(d.dest, d.copies);
+        } catch (e) {
+          printError = e;
+          break;
+        }
+      }
+      // Clean up files regardless of outcome.
+      for (const d of downloaded) fs.unlink(d.dest, () => {});
+
+      if (printError) {
+        console.error("[agent] Print failed:", printError.message);
+        try {
+          await postJson(api(`/api/jobs/${job.id}/print-result`), {
+            ok: false,
+            error: printError.message,
+          });
+        } catch (e2) {
+          console.error("[agent] Could not report print failure:", e2.message);
+        }
+      } else {
         await postJson(api(`/api/jobs/${job.id}/print-result`), { ok: true });
         console.log("[agent] Printed OK:", job.id);
-      } catch (printErr) {
-        console.error("[agent] Print failed:", printErr.message);
-        await postJson(api(`/api/jobs/${job.id}/print-result`), {
-          ok: false,
-          error: printErr.message,
-        });
-      } finally {
-        fs.unlink(dest, () => {});
       }
     }
   } catch (e) {

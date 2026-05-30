@@ -54,6 +54,7 @@ router.get("/kiosk/info", settings.kioskInfo);
 
 // Print helper / agent endpoints
 router.get("/jobs/:id/file", job.fetchJobFile);
+router.get("/jobs/:id/file/:fileId", job.fetchOneJobFile);
 router.post("/jobs/:id/print-result", job.reportPrintResult);
 router.get("/agent/next-job", job.agentNextJob);
 

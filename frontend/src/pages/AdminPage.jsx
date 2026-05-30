@@ -466,6 +466,95 @@ function SettingsEditor({ kioskId }) {
       {msg && <div className="toast">{msg}</div>}
       <Group title="Pricing" fields={PRICE_FIELDS} />
       <Group title="Limits & codes" fields={LIMIT_FIELDS} />
+
+      <Panel title="Multiple files">
+        <div className="grid sm:grid-cols-2 gap-3">
+          {/* enabled toggle */}
+          <div className="set-row">
+            <label className="lbl">Allow multiple files</label>
+            <div className="flex gap-2 items-center">
+              <select
+                className="input"
+                value={String(!!draft.multi_file_enabled)}
+                onChange={(e) =>
+                  setDraft({ ...draft, multi_file_enabled: e.target.value === "true" })
+                }
+              >
+                <option value="true">Enabled</option>
+                <option value="false">Disabled</option>
+              </select>
+              <button
+                className="save-btn"
+                disabled={
+                  busy ||
+                  String(!!draft.multi_file_enabled) ===
+                    String(!!settings.multi_file_enabled)
+                }
+                onClick={() => saveField("multi_file_enabled")}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+
+          {/* max files */}
+          <div className="set-row">
+            <label className="lbl">Max files per batch</label>
+            <div className="flex gap-2">
+              <div className="input-prefix">
+                <input
+                  className="input"
+                  value={draft.multi_file_max ?? ""}
+                  onChange={(e) =>
+                    setDraft({ ...draft, multi_file_max: e.target.value })
+                  }
+                />
+              </div>
+              <button
+                className="save-btn"
+                disabled={
+                  busy ||
+                  String(draft.multi_file_max) === String(settings.multi_file_max)
+                }
+                onClick={() => saveField("multi_file_max")}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+
+          {/* mode picker */}
+          <div className="set-row sm:col-span-2">
+            <label className="lbl">Mode</label>
+            <div className="flex gap-2 items-center">
+              <select
+                className="input"
+                value={draft.multi_file_mode || "shared"}
+                onChange={(e) =>
+                  setDraft({ ...draft, multi_file_mode: e.target.value })
+                }
+              >
+                <option value="shared">Shared (one setting for all files)</option>
+                <option value="per_file">Per file (each file has its own settings)</option>
+              </select>
+              <button
+                className="save-btn"
+                disabled={
+                  busy ||
+                  String(draft.multi_file_mode) === String(settings.multi_file_mode)
+                }
+                onClick={() => saveField("multi_file_mode")}
+              >
+                Save
+              </button>
+            </div>
+            <p className="text-muted text-xs mt-2">
+              In Shared mode, the customer picks one color/copies/sides config for the whole batch. In Per-file mode, each file has its own settings.
+            </p>
+          </div>
+        </div>
+      </Panel>
+
       <p className="text-muted text-xs">
         These settings apply only to this kiosk. Each value saves individually.
       </p>
