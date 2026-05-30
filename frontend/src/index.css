@@ -424,7 +424,10 @@ body {
 .lp2-hero-visual { position:relative; }
 .lp2-hero-img {
   display:block; width:100%; max-width:520px; margin: 0 auto;
-  filter: drop-shadow(0 30px 80px rgba(44,140,255,.35));
+  /* Blend the PNG's black backdrop into the dark page so only the kiosk shows. */
+  mix-blend-mode: lighten;
+  /* Slight contrast boost helps the white kiosk body pop after blending. */
+  filter: drop-shadow(0 30px 80px rgba(44,140,255,.45)) contrast(1.05);
 }
 .lp2-flow {
   position:absolute; right:0; top:18%; display:flex; flex-direction:column; gap:14px;
@@ -521,7 +524,8 @@ body {
   filter: blur(60px); z-index:0;
 }
 .lp2-op-visual img { position:relative; z-index:1; max-width:380px; width:100%; margin:0 auto; display:block;
-  filter: drop-shadow(0 30px 60px rgba(124,92,255,.35));
+  mix-blend-mode: lighten;
+  filter: drop-shadow(0 30px 60px rgba(124,92,255,.4)) contrast(1.05);
 }
 .lp2-op-text { z-index:1; }
 .mt-4 { margin-top:18px; }
