@@ -1038,6 +1038,20 @@ async function reportPrintResult(req, res) {
     const ok = !!req.body.ok;
     if (ok) {
       fileSvc.deleteFile(job.filePath);
+      // Also delete any per-file paths for multi-file jobs.
+      try {
+        const files = await prisma.jobFile.findMany({ where: { jobId: job.id } });
+        for (const f of files) {
+          if (f.filePath) fileSvc.deleteFile(f.filePath);
+        }
+        await prisma.jobFile.updateMany({
+          where: { jobId: job.id },
+          data: { filePath: null, fileDeleted: true },
+        });
+      } catch (e) {
+        // non-fatal; logs cleanup will catch leftovers
+        console.warn("cleanup multi-file paths:", e.message);
+      }
       await prisma.job.update({
         where: { id: job.id },
         data: {
@@ -1047,6 +1061,14 @@ async function reportPrintResult(req, res) {
           printedAt: new Date(),
         },
       });
+      // Decrement paper estimate (safe no-op if tracking is disabled).
+      try {
+        const paperSvc = require("../services/paperService");
+        await paperSvc.consume(job.kioskId, job.id);
+      } catch (e) {
+        // never fail the print just because paper-counting hiccuped
+        console.warn("paper.consume failed:", e.message);
+      }
       return res.json({ ok: true });
     }
 
@@ -1187,6 +1209,23 @@ async function fetchOneJobFile(req, res) {
   }
 }
 
+// GET /api/jobs/:id/precheck-paper  -> { ok, sheetsNeeded, sheetsAvailable }
+// Customer calls this right before Pay & Get Code to decide whether to
+// continue, in case the kiosk's paper estimate is too low. Always returns
+// 200 OK; ok:false means show a warning, not an error.
+async function precheckPaper(req, res) {
+  try {
+    const job = await prisma.job.findUnique({ where: { id: req.params.id } });
+    if (!job) return res.status(404).json({ error: "Job not found." });
+    const paperSvc = require("../services/paperService");
+    const result = await paperSvc.precheck(job.kioskId, job.id);
+    return res.json(result);
+  } catch (e) {
+    console.error("precheckPaper error:", e);
+    return res.status(500).json({ error: "Precheck failed." });
+  }
+}
+
 module.exports = {
   uploadFile,
   unlockJob,
@@ -1206,4 +1245,5 @@ module.exports = {
   configureMulti,
   appendFiles,
   deleteJobFile,
+  precheckPaper,
 };

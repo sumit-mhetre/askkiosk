@@ -12,6 +12,7 @@ import {
   kioskInfo,
   appendFilesToJob,
   deleteJobFile,
+  precheckPaper,
 } from "../lib/api.js";
 import { openCheckout } from "../lib/razorpay.js";
 import {
@@ -493,6 +494,10 @@ export default function PhoneFlow() {
   }
 
   // ----- Payment -----
+  // Paper precheck modal state
+  const [paperWarn, setPaperWarn] = useState(null); // { sheetsNeeded, sheetsAvailable }
+  const [acknowledgedPaper, setAcknowledgedPaper] = useState(false);
+
   async function payAndGetCode() {
     setError("");
     setBusy(true);
@@ -517,6 +522,28 @@ export default function PhoneFlow() {
           doubleSided,
         });
       }
+
+      // Paper precheck (only matters if kiosk has paper tracking enabled).
+      // If we already showed and the user acknowledged, skip and proceed.
+      if (!acknowledgedPaper) {
+        try {
+          const pre = await precheckPaper(jobId);
+          if (!pre.ok) {
+            setPaperWarn({
+              sheetsNeeded: pre.sheetsNeeded,
+              sheetsAvailable: pre.sheetsAvailable,
+              reason: pre.reason,
+            });
+            setBusy(false);
+            setStep(STEP.CONFIG);
+            return; // wait for user decision; modal will re-trigger payAndGetCode if they Proceed
+          }
+        } catch (e) {
+          // precheck failure is non-fatal; proceed with payment
+          console.warn("paper precheck failed:", e);
+        }
+      }
+
       const payment = await createPayment(jobId);
       const result = await openCheckout(payment);
       const ver = await verifyPayment(jobId, result);
@@ -532,6 +559,7 @@ export default function PhoneFlow() {
       setStep(STEP.CONFIG);
     } finally {
       setBusy(false);
+      setAcknowledgedPaper(false); // reset for next attempt
     }
   }
 
@@ -874,6 +902,51 @@ export default function PhoneFlow() {
       <p className="text-center text-muted text-xs mt-4">
         Need help? Ask at the counter.
       </p>
+
+      {paperWarn && (
+        <div className="paper-warn-backdrop" onClick={() => setPaperWarn(null)}>
+          <div className="paper-warn-card" onClick={(e) => e.stopPropagation()}>
+            <div className="paper-warn-icon">!</div>
+            <h3 className="paper-warn-title">
+              {paperWarn.reason === "out_of_paper"
+                ? "Kiosk Out of Paper"
+                : "Not Enough Paper"}
+            </h3>
+            <p className="paper-warn-text">
+              {paperWarn.reason === "out_of_paper" ? (
+                <>This kiosk is out of paper. Please try another kiosk.</>
+              ) : (
+                <>
+                  This kiosk has approximately{" "}
+                  <b>{paperWarn.sheetsAvailable} sheet{paperWarn.sheetsAvailable === 1 ? "" : "s"}</b>{" "}
+                  left. Your job needs <b>{paperWarn.sheetsNeeded}</b>. The print may run out
+                  before finishing. If it does, you will be refunded automatically.
+                </>
+              )}
+            </p>
+            <div className="paper-warn-actions">
+              <button
+                className="btn btn-ghost"
+                onClick={() => setPaperWarn(null)}
+              >
+                Cancel
+              </button>
+              {paperWarn.reason !== "out_of_paper" && (
+                <button
+                  className="btn btn-primary"
+                  onClick={() => {
+                    setAcknowledgedPaper(true);
+                    setPaperWarn(null);
+                    setTimeout(() => payAndGetCode(), 0);
+                  }}
+                >
+                  Proceed Anyway
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

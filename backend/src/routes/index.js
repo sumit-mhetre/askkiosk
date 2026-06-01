@@ -7,6 +7,8 @@ const { UPLOAD_DIR } = require("../services/fileService");
 const job = require("../controllers/jobController");
 const settings = require("../controllers/settingsController");
 const admin = require("../controllers/adminController");
+const paper = require("../controllers/paperController");
+const reports = require("../controllers/reportsController");
 const { requireRole } = require("../services/authService");
 
 const router = express.Router();
@@ -47,6 +49,7 @@ router.post(
 router.delete("/jobs/:id/file/:fileId", job.deleteJobFile);
 router.post("/jobs/:id/file/:fileId/unlock", job.unlockJobFile);
 router.post("/jobs/:id/configure-multi", job.configureMulti);
+router.get("/jobs/:id/precheck-paper", job.precheckPaper);
 router.post("/jobs/:id/unlock", job.unlockJob);
 router.post("/jobs/:id/configure", job.configureJob);
 router.post("/jobs/:id/pay", job.createPayment);
@@ -74,5 +77,19 @@ router.post("/admin/operators", requireRole("admin"), admin.createOperator);
 router.get("/admin/operators", requireRole("admin"), admin.listOperators);
 router.post("/admin/kiosks", requireRole("admin"), admin.createKiosk);
 router.get("/admin/kiosks", requireRole("admin"), admin.listKiosks);
+
+// Paper tracking (admin)
+router.get("/admin/kiosks/:kioskId/paper", requireRole("admin"), paper.getStatus);
+router.post("/admin/kiosks/:kioskId/paper/add", requireRole("admin"), paper.add);
+router.post("/admin/kiosks/:kioskId/paper/set", requireRole("admin"), paper.setExact);
+router.put("/admin/kiosks/:kioskId/paper/config", requireRole("admin"), paper.updateConfig);
+router.get("/admin/kiosks/:kioskId/paper/history", requireRole("admin"), paper.history);
+
+// Reports (admin)
+router.get("/admin/reports", requireRole("admin"), reports.allKiosks);
+router.get("/admin/reports/:kioskId", requireRole("admin"), reports.oneKiosk);
+
+// Public: customer's pre-payment paper precheck (no auth, but rate-limit-friendly)
+router.get("/kiosk/:kioskId/paper-status", paper.getStatus);
 
 module.exports = router;

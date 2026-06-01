@@ -1047,3 +1047,72 @@ body:has(.kiosk-dark) {
   .kiosk-dark .key { height: 70px !important; font-size: 28px !important; }
   .k-pin { width: 44px; height: 58px; font-size: 24px; }
 }
+
+/* ============ Paper warning modal (phone) ============ */
+.paper-warn-backdrop {
+  position: fixed; inset:0; z-index: 60;
+  background: rgba(15,23,41,.55); backdrop-filter: blur(4px);
+  display:flex; align-items:center; justify-content:center;
+  padding: 20px;
+  animation: pw-fade-in .2s ease-out;
+}
+@keyframes pw-fade-in { from { opacity:0 } to { opacity:1 } }
+.paper-warn-card {
+  background:#fff; border-radius:18px; max-width:380px; width:100%;
+  padding: 24px; text-align:center;
+  box-shadow: 0 24px 60px rgba(0,0,0,.25);
+  animation: pw-pop .25s cubic-bezier(.2,.9,.25,1.2);
+}
+@keyframes pw-pop { from { transform: scale(.92); opacity:0 } to { transform: scale(1); opacity:1 } }
+.paper-warn-icon {
+  width:54px; height:54px; border-radius:50%;
+  background:#FEF3C7; color:#92400E;
+  display:flex; align-items:center; justify-content:center;
+  font-weight:800; font-size:28px;
+  margin: 0 auto 14px;
+  border:2px solid #F59E0B;
+}
+.paper-warn-title { font-family:"Sora","Manrope",sans-serif; font-weight:800; font-size:20px; color:#111; }
+.paper-warn-text { color:#4B5563; font-size:14px; line-height:1.55; margin: 10px 0 20px; }
+.paper-warn-actions { display:flex; gap:10px; }
+.paper-warn-actions .btn { flex:1; }
+
+/* ============ Admin: Paper panel + Reports ============ */
+.paper-panel {
+  background: rgba(255,255,255,.03); border:1px solid var(--line, #e5e7eb);
+  border-radius: 14px; padding: 18px; margin-top: 14px;
+}
+.paper-status-row {
+  display:flex; justify-content:space-between; align-items:center;
+  margin-bottom: 14px; gap: 12px;
+}
+.paper-count-big {
+  font-family:"Sora","Manrope",sans-serif; font-weight:800; font-size:32px;
+  letter-spacing:-.01em;
+}
+.paper-count-big.low { color:#D97706; }
+.paper-count-big.empty { color:#B91C1C; }
+.paper-actions { display:grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.paper-actions .btn { font-size: 13px; padding: 8px 10px; }
+
+.reports-grid { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; }
+.report-stat { background:#F8FAFC; border:1px solid #E5E7EB; border-radius:10px; padding:10px 12px; }
+.report-stat-label { color:#6B7280; font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+.report-stat-value { font-family:"Sora","Manrope",sans-serif; font-weight:800; font-size:20px; color:#111; margin-top:2px; }
+.report-range-pills { display:flex; gap:6px; flex-wrap:wrap; margin-bottom: 14px; }
+.report-range-pill {
+  background:#F1F5F9; color:#475569; padding:6px 12px; border-radius:999px;
+  font-size:13px; font-weight:700; cursor:pointer; border:1px solid transparent;
+}
+.report-range-pill.active { background:#1E73E8; color:#fff; }
+
+.history-list { max-height: 260px; overflow-y:auto; margin-top: 10px; }
+.history-row {
+  display:flex; justify-content:space-between; gap: 8px;
+  padding: 8px 0; border-bottom: 1px solid #F1F5F9;
+  font-size: 13px;
+}
+.history-kind { font-weight:700; color:#374151; }
+.history-delta-pos { color:#15803D; font-weight:700; }
+.history-delta-neg { color:#B91C1C; font-weight:700; }
+.history-time { color:#6B7280; font-size: 11px; }

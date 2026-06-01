@@ -75,6 +75,51 @@ export async function deleteJobFile(jobId, fileId) {
   return data;
 }
 
+// Paper precheck called right before Pay & Get Code on the phone.
+// Always returns 200; { ok: false, sheetsNeeded, sheetsAvailable } means show a warning.
+export async function precheckPaper(jobId) {
+  const { data } = await api.get(`/jobs/${jobId}/precheck-paper`);
+  return data;
+}
+
+// Paper status (public read for the kiosk screen indicator).
+export async function publicPaperStatus(kioskId) {
+  const { data } = await api.get(`/kiosk/${kioskId}/paper-status`);
+  return data;
+}
+
+// Admin paper management
+export async function adminPaperGet(kioskId) {
+  const { data } = await api.get(`/admin/kiosks/${kioskId}/paper`);
+  return data;
+}
+export async function adminPaperAdd(kioskId, sheets, note) {
+  const { data } = await api.post(`/admin/kiosks/${kioskId}/paper/add`, { sheets, note });
+  return data;
+}
+export async function adminPaperSet(kioskId, sheets, note) {
+  const { data } = await api.post(`/admin/kiosks/${kioskId}/paper/set`, { sheets, note });
+  return data;
+}
+export async function adminPaperConfig(kioskId, payload) {
+  const { data } = await api.put(`/admin/kiosks/${kioskId}/paper/config`, payload);
+  return data;
+}
+export async function adminPaperHistory(kioskId, limit) {
+  const { data } = await api.get(`/admin/kiosks/${kioskId}/paper/history`, { params: { limit } });
+  return data;
+}
+
+// Admin reports
+export async function adminReports(range, from, to) {
+  const params = {};
+  if (range) params.range = range;
+  if (from) params.from = from;
+  if (to) params.to = to;
+  const { data } = await api.get(`/admin/reports`, { params });
+  return data;
+}
+
 export async function unlockJob(jobId, password) {
   const { data } = await api.post(`/jobs/${jobId}/unlock`, { password });
   return data;

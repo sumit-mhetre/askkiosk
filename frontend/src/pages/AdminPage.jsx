@@ -8,6 +8,12 @@ import {
   createKiosk,
   getSettings,
   updateSetting,
+  adminPaperGet,
+  adminPaperAdd,
+  adminPaperSet,
+  adminPaperConfig,
+  adminPaperHistory,
+  adminReports,
 } from "../lib/api.js";
 
 const APP_BASE = window.location.origin;
@@ -114,6 +120,7 @@ function Dashboard({ onLogout }) {
           {[
             ["kiosks", "Kiosks & QR"],
             ["operators", "Operators"],
+            ["reports", "Reports"],
           ].map(([id, label]) => (
             <button
               key={id}
@@ -138,6 +145,12 @@ function Dashboard({ onLogout }) {
           <div className="fade-up">
             <AddKiosk operators={operators} onAdded={refresh} />
             <KioskList kiosks={kiosks} />
+          </div>
+        )}
+
+        {tab === "reports" && (
+          <div className="fade-up">
+            <ReportsTab />
           </div>
         )}
       </main>
@@ -323,6 +336,7 @@ function KioskList({ kiosks }) {
           &larr; Back to all kiosks
         </button>
         <SettingsEditor kioskId={editing.id} />
+        <PaperPanel kioskId={editing.id} kioskName={editing.name} />
       </Panel>
     );
   }
@@ -575,4 +589,316 @@ function Field({ label, children }) {
 
 function Empty({ children }) {
   return <div className="empty">{children}</div>;
+}
+
+function PaperPanel({ kioskId, kioskName }) {
+  const [status, setStatus] = useState(null);
+  const [logs, setLogs] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [addQty, setAddQty] = useState("");
+  const [setQty, setSetQty] = useState("");
+  const [config, setConfig] = useState({ enabled: false, max: 250, lowThreshold: 20 });
+
+  async function refresh() {
+    try {
+      const s = await adminPaperGet(kioskId);
+      setStatus(s);
+      setConfig({
+        enabled: !!s.enabled,
+        max: s.max,
+        lowThreshold: s.lowThreshold,
+      });
+      const h = await adminPaperHistory(kioskId, 15);
+      setLogs(h.logs || []);
+    } catch (e) {
+      setMsg(e?.response?.data?.error || e.message);
+    }
+  }
+  useEffect(() => { refresh(); }, [kioskId]);
+
+  function toast(t) {
+    setMsg(t);
+    setTimeout(() => setMsg(""), 2500);
+  }
+
+  async function saveConfig() {
+    setBusy(true);
+    try {
+      const next = await adminPaperConfig(kioskId, config);
+      setStatus(next);
+      toast("Saved.");
+    } catch (e) {
+      toast(e?.response?.data?.error || e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function doAdd() {
+    const n = parseInt(addQty, 10);
+    if (!Number.isFinite(n) || n <= 0) return toast("Enter a positive number.");
+    setBusy(true);
+    try {
+      const next = await adminPaperAdd(kioskId, n);
+      setStatus(next);
+      setAddQty("");
+      toast(`Added ${n} sheets.`);
+      refresh();
+    } catch (e) {
+      toast(e?.response?.data?.error || e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function doSet() {
+    const n = parseInt(setQty, 10);
+    if (!Number.isFinite(n) || n < 0) return toast("Enter zero or a positive number.");
+    setBusy(true);
+    try {
+      const next = await adminPaperSet(kioskId, n);
+      setStatus(next);
+      setSetQty("");
+      toast(`Count set to ${n}.`);
+      refresh();
+    } catch (e) {
+      toast(e?.response?.data?.error || e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Panel title="Paper tracking" desc="Estimated paper count for this kiosk. Operator-managed; not a sensor reading.">
+      {msg && <div className="toast">{msg}</div>}
+
+      {/* Enable toggle */}
+      <div className="set-row" style={{ marginBottom: 14 }}>
+        <label className="lbl">Tracking</label>
+        <div className="flex gap-2 items-center">
+          <select
+            className="input"
+            value={String(!!config.enabled)}
+            onChange={(e) => setConfig({ ...config, enabled: e.target.value === "true" })}
+          >
+            <option value="true">Enabled</option>
+            <option value="false">Disabled</option>
+          </select>
+          <button className="save-btn" disabled={busy} onClick={saveConfig}>Save</button>
+        </div>
+      </div>
+
+      {config.enabled && (
+        <>
+          <div className="paper-panel">
+            <div className="paper-status-row">
+              <div>
+                <div className="text-muted text-xs" style={{ textTransform: "uppercase", letterSpacing: ".04em" }}>
+                  Approximately
+                </div>
+                <div
+                  className={
+                    "paper-count-big " +
+                    (!status ? "" : status.isEmpty ? "empty" : status.isLow ? "low" : "")
+                  }
+                >
+                  {status ? status.count : "..."} sheets
+                </div>
+                {status && (
+                  <div className="text-muted text-xs">
+                    of {status.max} max · low at {status.lowThreshold}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-3 mb-2">
+              {/* Add */}
+              <div className="set-row">
+                <label className="lbl">Add sheets (after refill)</label>
+                <div className="flex gap-2">
+                  <input
+                    className="input"
+                    placeholder="e.g. 250"
+                    value={addQty}
+                    onChange={(e) => setAddQty(e.target.value)}
+                  />
+                  <button className="save-btn" disabled={busy || !addQty} onClick={doAdd}>Add</button>
+                </div>
+              </div>
+
+              {/* Set exact */}
+              <div className="set-row">
+                <label className="lbl">Set exact count</label>
+                <div className="flex gap-2">
+                  <input
+                    className="input"
+                    placeholder="exact number"
+                    value={setQty}
+                    onChange={(e) => setSetQty(e.target.value)}
+                  />
+                  <button className="save-btn" disabled={busy || setQty === ""} onClick={doSet}>Set</button>
+                </div>
+              </div>
+            </div>
+
+            {/* Config */}
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div className="set-row">
+                <label className="lbl">Max capacity (tray)</label>
+                <div className="flex gap-2">
+                  <input
+                    className="input"
+                    value={config.max}
+                    onChange={(e) => setConfig({ ...config, max: parseInt(e.target.value, 10) || 0 })}
+                  />
+                  <button className="save-btn" disabled={busy} onClick={saveConfig}>Save</button>
+                </div>
+              </div>
+              <div className="set-row">
+                <label className="lbl">Low-warning threshold</label>
+                <div className="flex gap-2">
+                  <input
+                    className="input"
+                    value={config.lowThreshold}
+                    onChange={(e) => setConfig({ ...config, lowThreshold: parseInt(e.target.value, 10) || 0 })}
+                  />
+                  <button className="save-btn" disabled={busy} onClick={saveConfig}>Save</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* History */}
+          <div className="paper-panel">
+            <div className="text-muted text-xs" style={{ textTransform: "uppercase", letterSpacing: ".04em", marginBottom: 6 }}>
+              Recent activity
+            </div>
+            <div className="history-list">
+              {logs.length === 0 ? (
+                <p className="text-muted text-sm">No paper activity yet.</p>
+              ) : (
+                logs.map((l) => (
+                  <div className="history-row" key={l.id}>
+                    <div>
+                      <span className="history-kind">{l.kind}</span>
+                      {l.note ? <span className="text-muted"> · {l.note}</span> : null}
+                      <div className="history-time">
+                        {new Date(l.createdAt).toLocaleString()}
+                      </div>
+                    </div>
+                    <div>
+                      <span className={l.delta >= 0 ? "history-delta-pos" : "history-delta-neg"}>
+                        {l.delta >= 0 ? "+" : ""}{l.delta}
+                      </span>
+                      <div className="text-muted text-xs text-right">→ {l.newCount}</div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </Panel>
+  );
+}
+
+function ReportsTab() {
+  const [range, setRange] = useState("today");
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  async function load() {
+    setLoading(true);
+    setError("");
+    try {
+      const d = await adminReports(range);
+      setData(d);
+    } catch (e) {
+      setError(e?.response?.data?.error || e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+  useEffect(() => { load(); }, [range]);
+
+  return (
+    <Panel title="Reports" desc="Jobs, pages, and revenue across your kiosks.">
+      <div className="report-range-pills">
+        {[
+          ["today", "Today"],
+          ["week", "Past 7 days"],
+          ["month", "Past 30 days"],
+          ["all", "All time"],
+        ].map(([id, label]) => (
+          <button
+            key={id}
+            className={"report-range-pill " + (range === id ? "active" : "")}
+            onClick={() => setRange(id)}
+          >
+            {label}
+          </button>
+        ))}
+        <button className="report-range-pill" onClick={load}>Refresh</button>
+      </div>
+
+      {error && <p className="text-danger text-sm mb-4">{error}</p>}
+      {loading && <p className="text-muted text-sm">Loading...</p>}
+
+      {data && (
+        <>
+          {/* Totals */}
+          <div className="paper-panel">
+            <div className="text-muted text-xs" style={{ textTransform:"uppercase", letterSpacing:".04em", marginBottom:6 }}>
+              Across all kiosks
+            </div>
+            <div className="reports-grid">
+              <ReportStat label="Jobs Printed" value={data.total.printedJobs} />
+              <ReportStat label="Revenue" value={`Rs ${data.total.totalRevenue}`} />
+              <ReportStat label="Pages" value={data.total.totalPages} />
+              <ReportStat label="Sheets" value={data.total.totalSheets} />
+              <ReportStat label="Color jobs" value={data.total.colorJobs} />
+              <ReportStat label="B&W jobs" value={data.total.bwJobs} />
+              <ReportStat label="Duplex jobs" value={data.total.duplexJobs} />
+              <ReportStat label="Simplex jobs" value={data.total.simplexJobs} />
+              <ReportStat label="Failed / refunded" value={data.total.failedCount} />
+              <ReportStat label="Expired" value={data.total.expiredCount} />
+            </div>
+          </div>
+
+          {/* Per kiosk */}
+          {data.rows.map((r) => (
+            <div className="paper-panel" key={r.kioskId}>
+              <div className="flex items-center justify-between" style={{ marginBottom: 6 }}>
+                <div className="font-display font-bold">{r.kioskName}</div>
+                <div className="text-muted text-xs">{r.location || ""}</div>
+              </div>
+              <div className="reports-grid">
+                <ReportStat label="Jobs Printed" value={r.printedJobs} />
+                <ReportStat label="Revenue" value={`Rs ${r.totalRevenue}`} />
+                <ReportStat label="Pages" value={r.totalPages} />
+                <ReportStat label="Sheets" value={r.totalSheets} />
+                <ReportStat label="Color jobs" value={r.colorJobs} />
+                <ReportStat label="B&W jobs" value={r.bwJobs} />
+                <ReportStat label="Failed" value={r.failedCount} />
+                <ReportStat label="In flight" value={r.inFlightCount} />
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+    </Panel>
+  );
+}
+
+function ReportStat({ label, value }) {
+  return (
+    <div className="report-stat">
+      <div className="report-stat-label">{label}</div>
+      <div className="report-stat-value">{value}</div>
+    </div>
+  );
 }

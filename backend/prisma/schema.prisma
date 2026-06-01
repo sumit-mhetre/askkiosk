@@ -44,6 +44,15 @@ model Kiosk {
   // Local network address of the WiFi printer this kiosk drives.
   printerIp   String?
   printerPort Int      @default(9100)
+
+  // Paper tracking (per-kiosk). Estimated, not a sensor reading. Operator
+  // refills the count manually via the admin panel. Decremented automatically
+  // when the print agent reports success.
+  paperTrackingEnabled Boolean  @default(false)
+  paperCount           Int      @default(0)   // current estimated sheets remaining
+  paperMax             Int      @default(250) // standard A4 tray capacity
+  paperLowThreshold    Int      @default(20)  // show "low" warning at or below
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -53,9 +62,39 @@ model Kiosk {
 
   jobs        Job[]
   settings    Setting[]
+  paperLogs   PaperLog[]
 
   @@index([isActive])
   @@index([operatorId])
+}
+
+// History log for paper-tracking actions. One row per add / set / reset /
+// auto-decrement so operators can audit how the count changed over time.
+model PaperLog {
+  id        String   @id @default(uuid())
+  kioskId   String
+  kiosk     Kiosk    @relation(fields: [kioskId], references: [id], onDelete: Cascade)
+
+  // Type of change. "add" = operator added sheets. "set" = operator
+  // overrode to a specific count. "consume" = auto-decrement after a
+  // successful print. "reset" = full reset (typically to 0 or paperMax).
+  kind      String
+
+  // Signed change to the count (positive for add/reset-to-full, negative
+  // for consume). The absolute count after the change is also stored so
+  // history reads don't have to recompute.
+  delta     Int
+  newCount  Int
+
+  // Optional reference to the job that triggered a consume.
+  jobId     String?
+
+  // Optional human note (operator can add a comment on add/set).
+  note      String?
+
+  createdAt DateTime @default(now())
+
+  @@index([kioskId, createdAt])
 }
 
 // Key-value settings. Global rows have kioskId = null.
