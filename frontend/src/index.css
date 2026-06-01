@@ -801,3 +801,80 @@ body {
   0%, 100% { opacity:.3; transform: scale(.85); }
   50%      { opacity:1;  transform: scale(1.1); }
 }
+
+/* ============ Kiosk verified-FAILED animation ============ */
+
+/* Digit row shake to mean "no" */
+.kv-digits-fail {
+  animation:
+    kv-digits-shake .35s ease-in-out 1.0s 1,
+    kv-digits-out .55s ease-in 1.4s forwards;
+}
+@keyframes kv-digits-shake {
+  0%, 100% { transform: translateX(0); }
+  25%      { transform: translateX(-8px); }
+  50%      { transform: translateX(8px); }
+  75%      { transform: translateX(-4px); }
+}
+
+/* Red glow on digits (parallel to green success) */
+.kv-digit-red {
+  animation:
+    kv-digit-in .35s cubic-bezier(.2,.9,.25,1.2) forwards,
+    kv-digit-red-glow .5s ease-in-out 700ms forwards !important;
+}
+@keyframes kv-digit-red-glow {
+  0%   { border-color:#E5E7EB; background:#fff; color:#111; box-shadow:none; }
+  100% { border-color:#EF4444; background:#FEF2F2; color:#B91C1C;
+         box-shadow: 0 0 0 4px rgba(239,68,68,.15); }
+}
+
+/* Red glow halo + red card */
+.kv-glow-red {
+  background: radial-gradient(closest-side, rgba(239,68,68,.45), transparent 70%) !important;
+}
+.kv-x-card {
+  border-color: #EF4444 !important;
+  box-shadow: 0 12px 30px rgba(239,68,68,.25) !important;
+}
+
+/* Circle around the X */
+.kv-x-circle {
+  fill: none; stroke: #EF4444; stroke-width: 3.5; stroke-linecap: round;
+  stroke-dasharray: 145; stroke-dashoffset: 145;
+  transform-origin: 50% 50%; transform: rotate(-90deg);
+  animation: kv-circle-draw .5s ease-out 1.55s forwards;
+}
+
+/* X drawn as two diagonal lines */
+.kv-x-line-1, .kv-x-line-2 {
+  fill: none; stroke: #EF4444; stroke-width: 4.5;
+  stroke-linecap: round; stroke-linejoin: round;
+  stroke-dasharray: 30; stroke-dashoffset: 30;
+}
+.kv-x-line-1 {
+  animation: kv-tick-draw .28s cubic-bezier(.5,.1,.2,1.2) 1.95s forwards;
+}
+.kv-x-line-2 {
+  animation: kv-tick-draw .28s cubic-bezier(.5,.1,.2,1.2) 2.15s forwards;
+}
+
+/* Title + subtitle (slightly later than success so the X registers first) */
+.kv-title-fail {
+  animation: kv-text-in .4s ease-out 2.45s forwards !important;
+  color: #991B1B !important;
+}
+.kv-sub-fail {
+  animation: kv-text-in .4s ease-out 2.6s forwards !important;
+}
+
+/* Done button fades in last */
+.kv-done-btn {
+  opacity: 0;
+  animation: kv-text-in .4s ease-out 2.85s forwards;
+}
+
+/* Make the X card pop on the same timing as the success checkmark */
+.kv-x-wrap {
+  animation: kv-check-pop .55s cubic-bezier(.2,.9,.25,1.25) 1.45s forwards !important;
+}

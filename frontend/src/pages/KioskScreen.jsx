@@ -294,16 +294,36 @@ export default function KioskScreen() {
         )}
 
         {view === VIEW.RESULT && !result?.ok && (
-          <div className="text-center py-8 kv-err">
-            <div
-              className="mx-auto w-16 h-16 rounded-full flex items-center justify-center text-3xl"
-              style={{ background: "#FDEAEA", color: "#D33" }}
-            >
-              !
+          <div className="kv-stage" aria-live="polite">
+            {/* Digits typed by customer - pop in, then turn red, shake, dissolve */}
+            <div className="kv-digits kv-digits-fail">
+              {(result?.shownCode || "").split("").map((d, i) => (
+                <span
+                  key={i}
+                  className="kv-digit kv-digit-red"
+                  style={{ animationDelay: `${i * 60}ms` }}
+                >
+                  {d}
+                </span>
+              ))}
             </div>
-            <p className="font-bold text-lg mt-4">Try Again</p>
-            <p className="text-muted text-sm mt-2 px-2">{result?.message}</p>
-            <button className="btn btn-ghost mt-5" onClick={reset}>
+
+            {/* Red X card */}
+            <div className="kv-check-wrap kv-x-wrap">
+              <div className="kv-glow kv-glow-red" />
+              <div className="kv-check kv-x-card">
+                <svg viewBox="0 0 52 52" className="kv-check-svg">
+                  <circle className="kv-x-circle" cx="26" cy="26" r="23" />
+                  <path className="kv-x-line-1" d="M17 17 L35 35" />
+                  <path className="kv-x-line-2" d="M35 17 L17 35" />
+                </svg>
+              </div>
+            </div>
+
+            <p className="kv-title kv-title-fail">Code Not Valid</p>
+            <p className="kv-sub kv-sub-fail">{result?.message || "Please check the code and try again."}</p>
+
+            <button className="btn btn-ghost mt-4 kv-done-btn" onClick={reset}>
               Done
             </button>
           </div>
