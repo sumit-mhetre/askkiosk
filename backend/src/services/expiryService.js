@@ -49,6 +49,44 @@ async function expireJob(job) {
   );
 }
 
+// How long a job is allowed to stay in PRINTING before we assume the agent
+// has died/crashed/lost network. After this, the job is auto-refunded and the
+// kiosk is freed so the queue can move forward.
+const PRINTING_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
+// Refund + mark a stuck PRINTING job as failed so the kiosk frees up.
+async function recoverStuckJob(job) {
+  const payment = await prisma.payment.findUnique({ where: { jobId: job.id } });
+  let refunded = false;
+  if (payment && payment.status === "SUCCESS" && payment.gatewayPaymentId) {
+    try {
+      const r = await rzp.refundPayment(payment.gatewayPaymentId, job.amount);
+      await prisma.payment.update({
+        where: { jobId: job.id },
+        data: { status: "REFUNDED", refundId: r.id, refundedAt: new Date() },
+      });
+      refunded = true;
+    } catch (e) {
+      console.error("[watchdog] refund failed for stuck job", job.id, e.message);
+    }
+  }
+  if (job.filePath) fileSvc.deleteFile(job.filePath);
+  await prisma.job.update({
+    where: { id: job.id },
+    data: {
+      state: "FAILED_REFUNDED",
+      filePath: null,
+      fileDeleted: true,
+    },
+  });
+  console.log(
+    "[watchdog] Recovered stuck PRINTING job",
+    job.id,
+    refunded ? "(refunded)" : "(no refund needed)",
+    "- kiosk", job.kioskId, "is now free"
+  );
+}
+
 // Main sweep. Safe to call often; throttled internally.
 async function runExpirySweep(force = false) {
   const now = Date.now();
@@ -57,6 +95,9 @@ async function runExpirySweep(force = false) {
 
   try {
     // 1) Paid-but-unused codes past their expiry -> refund + expire.
+    //    Only CODE_ISSUED jobs get this treatment. Once a customer has
+    //    entered the code at the kiosk (CLAIMED, QUEUED, PRINTING), the
+    //    expiry-refund logic does not apply -- they are committed.
     const expiredUnused = await prisma.job.findMany({
       where: {
         state: "CODE_ISSUED",
@@ -68,7 +109,20 @@ async function runExpirySweep(force = false) {
       await expireJob(job);
     }
 
-    // 2) Purge old metadata past retention (files already gone).
+    // 2) Stuck PRINTING jobs past the watchdog timeout -> refund + free kiosk.
+    const stuckCutoff = new Date(Date.now() - PRINTING_TIMEOUT_MS);
+    const stuck = await prisma.job.findMany({
+      where: {
+        state: "PRINTING",
+        updatedAt: { lt: stuckCutoff },
+      },
+      take: 20,
+    });
+    for (const job of stuck) {
+      await recoverStuckJob(job);
+    }
+
+    // 3) Purge old metadata past retention (files already gone).
     const purgeable = await prisma.job.findMany({
       where: {
         purgeAfter: { lt: new Date() },

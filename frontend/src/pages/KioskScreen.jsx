@@ -1,15 +1,16 @@
 import React, { useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Logo } from "../components/UI.jsx";
-import { kioskClaimOnly } from "../lib/api.js";
+import { kioskClaimOnly, getStatus } from "../lib/api.js";
 
-const VIEW = { HOME: "home", RESULT: "result" };
+const VIEW = { HOME: "home", RESULT: "result", QUEUE: "queue" };
 
 export default function KioskScreen() {
   const [view, setView] = useState(VIEW.HOME);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState(null); // { ok, message }
+  const [result, setResult] = useState(null); // { ok, message, shownCode, jobId }
+  const [queue, setQueue] = useState(null); // { jobId, position, shownCode }
 
   // The phone web app URL. The QR points to the site root.
   // This kiosk's own ID, from the URL (?kiosk=ID). Used so the QR points to
@@ -30,36 +31,47 @@ export default function KioskScreen() {
     const entered = code; // remember before we clear
     setBusy(true);
     try {
-      // Mark the job ready to print. The local print agent (Windows/Android)
-      // picks it up, prints it, and reports the result back to the backend.
       const claim = await kioskClaimOnly(code, myKioskId);
+      if (claim.queued) {
+        // Kiosk was busy; we accepted the code but the job is in queue.
+        setQueue({
+          jobId: claim.jobId,
+          position: claim.position || 2,
+          shownCode: entered,
+        });
+        setView(VIEW.QUEUE);
+        setCode("");
+        return;
+      }
       setResult({
         ok: true,
         message: "Sent to printer. Please collect your document from the slot.",
         jobId: claim.jobId,
         shownCode: entered,
       });
+      setView(VIEW.RESULT);
+      setCode("");
     } catch (err) {
       const msg =
         (err && err.response && err.response.data && err.response.data.error) ||
         err.message ||
         "Could not print. Please try again.";
       setResult({ ok: false, message: msg, shownCode: entered });
-    } finally {
-      setBusy(false);
       setView(VIEW.RESULT);
       setCode("");
+    } finally {
+      setBusy(false);
     }
   }
 
   function reset() {
     setCode("");
     setResult(null);
+    setQueue(null);
     setView(VIEW.HOME);
   }
 
-  // Auto-return to home: faster on success (animation reads quickly), longer on
-  // error so the customer can read the message.
+  // Auto-return to home from RESULT: faster on success, longer on error.
   useEffect(() => {
     if (view === VIEW.RESULT) {
       const ms = result?.ok ? 2800 : 6000;
@@ -67,6 +79,71 @@ export default function KioskScreen() {
       return () => clearTimeout(t);
     }
   }, [view, result]);
+
+  // While QUEUED, poll the job status every 3s. When the job moves to PRINTING
+  // we show the verified animation; when it finishes we either reset (printed
+  // ok) or show the failed-refund message.
+  useEffect(() => {
+    if (view !== VIEW.QUEUE || !queue?.jobId) return;
+    let stopped = false;
+    const tick = async () => {
+      try {
+        const s = await getStatus(queue.jobId);
+        if (stopped) return;
+        if (s.state === "PRINTING") {
+          setResult({
+            ok: true,
+            message: "Sent to printer. Please collect your document from the slot.",
+            jobId: queue.jobId,
+            shownCode: queue.shownCode,
+          });
+          setQueue(null);
+          setView(VIEW.RESULT);
+        } else if (s.state === "PRINTED_OK") {
+          // Edge: agent printed and reported faster than our poll caught
+          // PRINTING. Still show the verified animation so the customer sees
+          // their job went through.
+          setResult({
+            ok: true,
+            message: "Done. Please collect your document from the slot.",
+            jobId: queue.jobId,
+            shownCode: queue.shownCode,
+          });
+          setQueue(null);
+          setView(VIEW.RESULT);
+        } else if (s.state === "FAILED_REFUNDED" || s.state === "EXPIRED") {
+          setResult({
+            ok: false,
+            message: "Sorry, this print failed. Your payment has been refunded.",
+            shownCode: queue.shownCode,
+          });
+          setQueue(null);
+          setView(VIEW.RESULT);
+        } else if (s.state === "QUEUED" && typeof s.queuePosition === "number") {
+          // Update position as queue drains.
+          if (s.queuePosition !== queue.position) {
+            setQueue({ ...queue, position: s.queuePosition });
+          }
+        }
+      } catch (e) {
+        // ignore transient errors
+      }
+    };
+    tick();
+    const id = setInterval(tick, 3000);
+    // Hard limit: 15 minutes in the queue screen. If we are still queued after
+    // that, give up and reset to home (something is wrong upstream).
+    const stopAt = setTimeout(() => {
+      stopped = true;
+      clearInterval(id);
+      reset();
+    }, 15 * 60 * 1000);
+    return () => {
+      stopped = true;
+      clearInterval(id);
+      clearTimeout(stopAt);
+    };
+  }, [view, queue]);
 
   return (
     <div className="min-h-full flex flex-col items-center justify-center px-4 py-6 max-w-4xl mx-auto">
@@ -143,6 +220,42 @@ export default function KioskScreen() {
                 {busy ? "Printing..." : "Submit"}
               </button>
             </div>
+          </div>
+        )}
+
+        {view === VIEW.QUEUE && queue && (
+          <div className="kv-queue" aria-live="polite">
+            <div className="kv-digits">
+              {(queue.shownCode || "").split("").map((d, i) => (
+                <span
+                  key={i}
+                  className="kv-digit kv-digit-amber"
+                  style={{ animationDelay: `${i * 60}ms` }}
+                >
+                  {d}
+                </span>
+              ))}
+            </div>
+
+            <div className="kv-queue-badge">
+              <span className="kv-queue-pos">#{queue.position}</span>
+              <span className="kv-queue-label">In queue</span>
+            </div>
+
+            <p className="kv-title">Code Accepted</p>
+            <p className="kv-sub">
+              {queue.position <= 2
+                ? "You're next. Your document will print in a moment."
+                : `${queue.position - 1} job${queue.position - 1 === 1 ? "" : "s"} ahead of you. Please wait.`}
+            </p>
+
+            <div className="kv-spinner-dot">
+              <span /><span /><span />
+            </div>
+
+            <button className="btn btn-ghost mt-4" onClick={reset}>
+              Return to Home
+            </button>
           </div>
         )}
 

@@ -79,6 +79,7 @@ enum JobState {
   PAID // payment confirmed by webhook
   CODE_ISSUED // unique code generated and shown
   CLAIMED // correct code entered at the kiosk
+  QUEUED // code accepted at busy kiosk; waiting for current job to finish
   PRINTING // sent to printer, in progress
   PRINTED_OK // printer confirmed success; file deleted; code consumed
   FAILED_REFUNDED // retries exhausted; auto-refund issued

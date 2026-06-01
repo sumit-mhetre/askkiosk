@@ -863,11 +863,30 @@ async function jobStatus(req, res) {
     include: { payment: true },
   });
   if (!job) return res.status(404).json({ error: "Job not found." });
+
+  let queuePosition = null;
+  if (job.state === "QUEUED") {
+    // Count of queued jobs strictly older than this one on the same kiosk,
+    // +1 for the currently printing job, +1 for this one = absolute position.
+    const ahead = await prisma.job.count({
+      where: {
+        kioskId: job.kioskId,
+        state: "QUEUED",
+        createdAt: { lt: job.createdAt },
+      },
+    });
+    const printing = await prisma.job.count({
+      where: { kioskId: job.kioskId, state: "PRINTING" },
+    });
+    queuePosition = ahead + printing + 1;
+  }
+
   return res.json({
     jobId: job.id,
     state: job.state,
     amount: job.amount,
     paymentStatus: job.payment ? job.payment.status : null,
+    queuePosition,
   });
 }
 
@@ -902,11 +921,29 @@ async function claimOnly(req, res) {
       return res.status(400).json({ error: "This code has expired." });
     }
 
-    // Busy check is per physical kiosk (this machine).
+    // Busy check is per physical kiosk (this machine). If another job is
+    // already printing here, QUEUE this one instead of rejecting it. The
+    // agent picks queued jobs up in order when the printer is free.
     const busy = await prisma.job.findFirst({
       where: { kioskId: kiosk.id, state: "PRINTING" },
     });
-    if (busy) return res.status(409).json({ error: settings.busy_message });
+    if (busy) {
+      const queuedAhead = await prisma.job.count({
+        where: { kioskId: kiosk.id, state: "QUEUED" },
+      });
+      await prisma.job.update({
+        where: { id: job.id },
+        data: { state: "QUEUED", kioskId: kiosk.id },
+      });
+      // Position = (queued ahead) + 1 for the currently printing job + 1 for
+      // this one. So if no one was queued ahead, this customer is #2 overall.
+      return res.json({
+        ok: true,
+        jobId: job.id,
+        queued: true,
+        position: queuedAhead + 2,
+      });
+    }
 
     // Route the job to THIS kiosk for printing (the machine where the code
     // was entered), even if it was uploaded at another of the operator's kiosks.
@@ -918,6 +955,7 @@ async function claimOnly(req, res) {
     return res.json({
       ok: true,
       jobId: job.id,
+      queued: false,
       fileUrl: `/api/jobs/${job.id}/file`,
     });
   } catch (e) {
@@ -1021,11 +1059,33 @@ async function agentNextJob(req, res) {
     }
     if (!kioskId) return res.json({ job: null });
 
-    const job = await prisma.job.findFirst({
+    // First: is there already a job in PRINTING on this kiosk? If so, return it
+    // (the agent may have polled before reporting result; this keeps idempotency).
+    let job = await prisma.job.findFirst({
       where: { kioskId, state: "PRINTING", fileDeleted: false },
       orderBy: { updatedAt: "asc" },
       include: { files: { orderBy: { position: "asc" } } },
     });
+
+    // Otherwise: promote the OLDEST QUEUED job (if any) to PRINTING so it can
+    // print next. This drains the queue one job at a time.
+    if (!job) {
+      const next = await prisma.job.findFirst({
+        where: { kioskId, state: "QUEUED", fileDeleted: false },
+        orderBy: { updatedAt: "asc" }, // earliest queued first
+      });
+      if (next) {
+        await prisma.job.update({
+          where: { id: next.id },
+          data: { state: "PRINTING" },
+        });
+        job = await prisma.job.findUnique({
+          where: { id: next.id },
+          include: { files: { orderBy: { position: "asc" } } },
+        });
+      }
+    }
+
     if (!job) return res.json({ job: null });
 
     // Build a normalized file list the agent loops over. For "single" mode the
