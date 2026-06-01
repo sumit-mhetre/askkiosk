@@ -12,6 +12,14 @@ export default function KioskScreen() {
   const [result, setResult] = useState(null); // { ok, message, shownCode, jobId }
   const [queue, setQueue] = useState(null); // { jobId, position, shownCode }
 
+  // Force navy body bg while the kiosk screen is mounted (covers browsers
+  // without :has() support).
+  useEffect(() => {
+    const prev = document.body.style.background;
+    document.body.style.background = "#0B1228";
+    return () => { document.body.style.background = prev; };
+  }, []);
+
   // The phone web app URL. The QR points to the site root.
   // This kiosk's own ID, from the URL (?kiosk=ID). Used so the QR points to
   // this kiosk and the claim is scoped to this kiosk's operator.
@@ -146,8 +154,8 @@ export default function KioskScreen() {
   }, [view, queue]);
 
   return (
-    <div className="min-h-full flex flex-col items-center justify-center px-4 py-6 max-w-4xl mx-auto">
-      <div className="card w-full p-6">
+    <div className="kiosk-dark min-h-full flex flex-col items-center justify-center px-4 py-6 max-w-4xl mx-auto">
+      <div className="card w-full p-6 kiosk-card">
         <div className="py-1">
           <Logo />
         </div>
@@ -187,8 +195,7 @@ export default function KioskScreen() {
                 {Array.from({ length: 6 }).map((_, i) => (
                   <div
                     key={i}
-                    className="w-9 h-11 rounded-lg border flex items-center justify-center text-xl font-bold"
-                    style={{ borderColor: code[i] ? "#1E73E8" : "#E5E7EB" }}
+                    className={"k-pin " + (code[i] ? "k-pin-on" : "")}
                   >
                     {code[i] || ""}
                   </div>

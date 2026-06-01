@@ -878,3 +878,172 @@ body {
 .kv-x-wrap {
   animation: kv-check-pop .55s cubic-bezier(.2,.9,.25,1.25) 1.45s forwards !important;
 }
+
+/* ============ Kiosk dark theme (tablet screen only) ============
+   Sunlight-readable dark navy with high-contrast text and buttons.
+   Wrapped in .kiosk-dark so phone + admin stay light. */
+
+.kiosk-dark {
+  --k-bg: #0B1228;
+  --k-card: #131C3A;
+  --k-elev: #1A2547;
+  --k-line: rgba(255,255,255,0.10);
+  --k-line-strong: rgba(255,255,255,0.18);
+  --k-text: #F1F5FB;
+  --k-muted: #94A6CC;
+  --k-primary: #4D90FE; /* brighter than light theme's #1E73E8 for outdoor */
+  --k-primary-hi: #6FB1FF;
+  color: var(--k-text);
+  min-height: 100vh;
+}
+
+/* Paint the page navy by attaching to the wrapping container's parent. */
+body:has(.kiosk-dark) {
+  background: var(--k-bg) !important;
+  background:
+    radial-gradient(circle at 20% 10%, rgba(77,144,254,.08), transparent 60%),
+    radial-gradient(circle at 80% 90%, rgba(124,92,255,.08), transparent 60%),
+    #0B1228 !important;
+}
+
+/* Card */
+.kiosk-dark .kiosk-card {
+  background: var(--k-card) !important;
+  border: 1px solid var(--k-line) !important;
+  box-shadow: 0 24px 60px rgba(0,0,0,.45) !important;
+  border-radius: 22px !important;
+}
+
+/* Logo color override: dark-theme Logo */
+.kiosk-dark .logo-mark { color: var(--k-text) !important; }
+.kiosk-dark .text-muted { color: var(--k-muted) !important; }
+.kiosk-dark p { color: var(--k-text); }
+.kiosk-dark p.text-muted { color: var(--k-muted) !important; }
+
+/* Generic backgrounds inside the kiosk */
+.kiosk-dark .bg-bg { background: var(--k-elev) !important; }
+.kiosk-dark .bg-line, .kiosk-dark .border-line { background: var(--k-line) !important; }
+.kiosk-dark .border, .kiosk-dark [class*="border-line"] { border-color: var(--k-line-strong) !important; }
+.kiosk-dark .bg-white { background: #fff !important; } /* keep QR box white for scan accuracy */
+
+/* QR section block (left panel) */
+.kiosk-dark .bg-bg.border {
+  background: var(--k-elev) !important;
+  border-color: var(--k-line-strong) !important;
+}
+
+/* "or" vertical separator */
+.kiosk-dark .w-px.bg-line { background: var(--k-line-strong) !important; }
+.kiosk-dark .h-px.bg-line { background: var(--k-line-strong) !important; }
+
+/* PIN entry boxes - large, high contrast */
+.k-pin {
+  width: 56px; height: 70px; border-radius: 12px;
+  border: 2px solid rgba(255,255,255,.18);
+  background: rgba(255,255,255,.04);
+  color: var(--k-text);
+  display: flex; align-items: center; justify-content: center;
+  font-family: "Sora","Manrope",sans-serif; font-weight: 800;
+  font-size: 30px;
+}
+.k-pin-on {
+  border-color: var(--k-primary-hi);
+  background: rgba(77,144,254,.18);
+  box-shadow: 0 0 0 3px rgba(77,144,254,.15);
+}
+
+/* Keypad - bigger buttons, light surface on dark for contrast */
+.kiosk-dark .key {
+  background: #fff !important;
+  color: #0B1228 !important;
+  border: 1px solid rgba(0,0,0,0) !important;
+  border-radius: 16px !important;
+  font-family: "Sora","Manrope",sans-serif;
+  font-weight: 800;
+  font-size: 32px !important;
+  height: 80px !important;
+  box-shadow: 0 4px 0 rgba(0,0,0,.25), 0 8px 16px rgba(0,0,0,.4);
+  transition: transform .06s ease, box-shadow .15s ease;
+}
+.kiosk-dark .key:active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 rgba(0,0,0,.25), 0 3px 6px rgba(0,0,0,.4);
+}
+.kiosk-dark .grid.grid-cols-3 { gap: 14px !important; max-width: 320px !important; }
+
+/* Submit button - bigger, brighter, more glow */
+.kiosk-dark .btn-primary {
+  background: linear-gradient(160deg, var(--k-primary), #2D6FE0) !important;
+  color: #fff !important;
+  height: 64px !important;
+  font-size: 20px !important;
+  font-weight: 800 !important;
+  border-radius: 18px !important;
+  max-width: 320px !important;
+  box-shadow: 0 8px 22px rgba(77,144,254,.45);
+  border: none !important;
+}
+.kiosk-dark .btn-primary:disabled {
+  background: rgba(255,255,255,.10) !important;
+  color: rgba(255,255,255,.45) !important;
+  box-shadow: none;
+}
+
+/* Ghost button (Done / Return to home) */
+.kiosk-dark .btn-ghost {
+  background: rgba(255,255,255,.06) !important;
+  color: var(--k-text) !important;
+  border: 1px solid var(--k-line-strong) !important;
+  border-radius: 16px !important;
+  height: 50px !important;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+}
+
+/* Header text bigger for outdoor reading */
+.kiosk-dark .py-1 + p { font-size: 16px !important; margin-bottom: 18px !important; }
+.kiosk-dark p.font-semibold { font-size: 16px !important; }
+
+/* Verified / queue / failed digits need stronger borders for dark bg */
+.kiosk-dark .kv-digit {
+  background: rgba(255,255,255,.06) !important;
+  border-color: rgba(255,255,255,.18) !important;
+  color: var(--k-text) !important;
+}
+
+/* On dark theme, the verified-green should glow more strongly */
+.kiosk-dark @keyframes kv-digit-glow {
+  to {
+    border-color:#22C55E; background:rgba(34,197,94,.18); color:#86EFAC;
+    box-shadow: 0 0 0 4px rgba(34,197,94,.25), 0 0 24px rgba(34,197,94,.35);
+  }
+}
+
+/* The check/X cards need a dark interior on dark background */
+.kiosk-dark .kv-check {
+  background: var(--k-elev) !important;
+  box-shadow: 0 12px 40px rgba(34,197,94,.4) !important;
+}
+.kiosk-dark .kv-x-card {
+  background: var(--k-elev) !important;
+  box-shadow: 0 12px 40px rgba(239,68,68,.4) !important;
+}
+
+/* Queue badge stays bright amber, just elevate it */
+.kiosk-dark .kv-queue-badge {
+  box-shadow: 0 12px 40px rgba(245,158,11,.4) !important;
+}
+
+/* Verified title color override - lighter for readability on dark */
+.kiosk-dark .kv-title { color: var(--k-text) !important; }
+.kiosk-dark .kv-sub { color: var(--k-muted) !important; }
+.kiosk-dark .kv-title-fail { color: #FCA5A5 !important; }
+
+/* Footer */
+.kiosk-dark + p, .kiosk-dark p.text-xs { color: var(--k-muted) !important; }
+
+/* Mobile keypad sizing scales up too */
+@media (max-width: 640px) {
+  .kiosk-dark .key { height: 70px !important; font-size: 28px !important; }
+  .k-pin { width: 44px; height: 58px; font-size: 24px; }
+}
