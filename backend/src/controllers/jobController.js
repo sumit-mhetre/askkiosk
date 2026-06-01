@@ -908,14 +908,38 @@ async function claimOnly(req, res) {
     const codeHash = codeSvc.hashCode(String(code).trim());
 
     // Operator-scoped match: a code is valid if the job belongs to the same
-    // operator as this kiosk. If the kiosk has no operator (legacy), fall back
-    // to matching by kiosk id.
+    // operator as this kiosk. We accept CODE_ISSUED (first claim) and QUEUED
+    // (customer re-entering a code that's already in queue, e.g. they typed
+    // it again from confusion). If the kiosk has no operator (legacy),
+    // fall back to matching by kiosk id.
     const where = kiosk.operatorId
-      ? { operatorId: kiosk.operatorId, codeHash, state: "CODE_ISSUED" }
-      : { kioskId: kiosk.id, codeHash, state: "CODE_ISSUED" };
+      ? { operatorId: kiosk.operatorId, codeHash, state: { in: ["CODE_ISSUED", "QUEUED"] } }
+      : { kioskId: kiosk.id, codeHash, state: { in: ["CODE_ISSUED", "QUEUED"] } };
 
     const job = await prisma.job.findFirst({ where });
     if (!job) return res.status(404).json({ error: "Invalid or already used code." });
+
+    // If the customer is re-entering a code that's already in queue, just
+    // tell them their position again instead of treating it as a new claim.
+    if (job.state === "QUEUED") {
+      const queuedAhead = await prisma.job.count({
+        where: {
+          kioskId: job.kioskId,
+          state: "QUEUED",
+          createdAt: { lt: job.createdAt },
+        },
+      });
+      const printing = await prisma.job.count({
+        where: { kioskId: job.kioskId, state: "PRINTING" },
+      });
+      return res.json({
+        ok: true,
+        jobId: job.id,
+        queued: true,
+        position: queuedAhead + printing + 1,
+      });
+    }
+
     if (codeSvc.isExpired(job.codeExpiresAt)) {
       await prisma.job.update({ where: { id: job.id }, data: { state: "EXPIRED" } });
       return res.status(400).json({ error: "This code has expired." });
@@ -933,7 +957,13 @@ async function claimOnly(req, res) {
       });
       await prisma.job.update({
         where: { id: job.id },
-        data: { state: "QUEUED", kioskId: kiosk.id },
+        data: {
+          state: "QUEUED",
+          kioskId: kiosk.id,
+          // Clear codeHash so the same code can't be re-used to spawn another
+          // job. The customer's job is already locked into the queue.
+          codeHash: null,
+        },
       });
       // Position = (queued ahead) + 1 for the currently printing job + 1 for
       // this one. So if no one was queued ahead, this customer is #2 overall.
@@ -947,9 +977,10 @@ async function claimOnly(req, res) {
 
     // Route the job to THIS kiosk for printing (the machine where the code
     // was entered), even if it was uploaded at another of the operator's kiosks.
+    // Clear codeHash so the same code can never be re-entered.
     await prisma.job.update({
       where: { id: job.id },
-      data: { state: "PRINTING", kioskId: kiosk.id },
+      data: { state: "PRINTING", kioskId: kiosk.id, codeHash: null },
     });
 
     return res.json({
