@@ -27,6 +27,7 @@ export default function KioskScreen() {
 
   async function submit() {
     if (code.length < 4) return;
+    const entered = code; // remember before we clear
     setBusy(true);
     try {
       // Mark the job ready to print. The local print agent (Windows/Android)
@@ -36,13 +37,14 @@ export default function KioskScreen() {
         ok: true,
         message: "Sent to printer. Please collect your document from the slot.",
         jobId: claim.jobId,
+        shownCode: entered,
       });
     } catch (err) {
       const msg =
         (err && err.response && err.response.data && err.response.data.error) ||
         err.message ||
         "Could not print. Please try again.";
-      setResult({ ok: false, message: msg });
+      setResult({ ok: false, message: msg, shownCode: entered });
     } finally {
       setBusy(false);
       setView(VIEW.RESULT);
@@ -56,13 +58,15 @@ export default function KioskScreen() {
     setView(VIEW.HOME);
   }
 
-  // Auto-return to home after showing a result.
+  // Auto-return to home: faster on success (animation reads quickly), longer on
+  // error so the customer can read the message.
   useEffect(() => {
     if (view === VIEW.RESULT) {
-      const t = setTimeout(reset, 6000);
+      const ms = result?.ok ? 2800 : 6000;
+      const t = setTimeout(reset, ms);
       return () => clearTimeout(t);
     }
-  }, [view]);
+  }, [view, result]);
 
   return (
     <div className="min-h-full flex flex-col items-center justify-center px-4 py-6 max-w-4xl mx-auto">
@@ -142,20 +146,49 @@ export default function KioskScreen() {
           </div>
         )}
 
-        {view === VIEW.RESULT && (
-          <div className="text-center py-8">
+        {view === VIEW.RESULT && result?.ok && (
+          <div className="kv-stage" aria-live="polite">
+            {/* Step 1: digits glow + dissolve (uses lastCode captured before reset) */}
+            <div className="kv-digits">
+              {(result?.shownCode || "").split("").map((d, i) => (
+                <span
+                  key={i}
+                  className="kv-digit"
+                  style={{ animationDelay: `${i * 60}ms` }}
+                >
+                  {d}
+                </span>
+              ))}
+            </div>
+
+            {/* Step 2: checkmark card */}
+            <div className="kv-check-wrap">
+              <div className="kv-glow" />
+              <div className="kv-check">
+                <svg viewBox="0 0 52 52" className="kv-check-svg">
+                  <circle className="kv-check-circle" cx="26" cy="26" r="23" />
+                  <path
+                    className="kv-check-path"
+                    d="M14 27 L23 36 L39 18"
+                  />
+                </svg>
+              </div>
+            </div>
+
+            <p className="kv-title">Code Verified</p>
+            <p className="kv-sub">Printing your documents...</p>
+          </div>
+        )}
+
+        {view === VIEW.RESULT && !result?.ok && (
+          <div className="text-center py-8 kv-err">
             <div
               className="mx-auto w-16 h-16 rounded-full flex items-center justify-center text-3xl"
-              style={{
-                background: result?.ok ? "#E7F3EA" : "#FDEAEA",
-                color: result?.ok ? "#2E9E4F" : "#D33",
-              }}
+              style={{ background: "#FDEAEA", color: "#D33" }}
             >
-              {result?.ok ? "✓" : "!"}
+              !
             </div>
-            <p className="font-bold text-lg mt-4">
-              {result?.ok ? "Success" : "Try Again"}
-            </p>
+            <p className="font-bold text-lg mt-4">Try Again</p>
             <p className="text-muted text-sm mt-2 px-2">{result?.message}</p>
             <button className="btn btn-ghost mt-5" onClick={reset}>
               Done
