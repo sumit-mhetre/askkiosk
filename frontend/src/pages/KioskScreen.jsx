@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Logo } from "../components/UI.jsx";
 import { kioskClaimOnly, getStatus } from "../lib/api.js";
@@ -20,6 +20,22 @@ export default function KioskScreen() {
     return () => { document.body.style.background = prev; };
   }, []);
 
+  // Auto-submit when the customer finishes typing 6 digits. The ref guards
+  // against double-fire (React strict mode in dev or a stray re-render). It
+  // is reset whenever the code is cleared or shrinks back below 6, so the
+  // next retry will fire again.
+  const autoFired = useRef(false);
+  useEffect(() => {
+    if (code.length === 6 && view === VIEW.HOME && !busy && !autoFired.current) {
+      autoFired.current = true;
+      submit();
+    }
+    if (code.length < 6) {
+      autoFired.current = false;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code, view, busy]);
+
   // The phone web app URL. The QR points to the site root.
   // This kiosk's own ID, from the URL (?kiosk=ID). Used so the QR points to
   // this kiosk and the claim is scoped to this kiosk's operator.
@@ -35,7 +51,7 @@ export default function KioskScreen() {
   }
 
   async function submit() {
-    if (code.length < 4) return;
+    if (code.length !== 6 || busy) return;
     const entered = code; // remember before we clear
     setBusy(true);
     try {
@@ -222,7 +238,7 @@ export default function KioskScreen() {
               <button
                 className="btn btn-primary mt-4 w-full max-w-[260px]"
                 onClick={submit}
-                disabled={busy || code.length < 4}
+                disabled={busy || code.length !== 6}
               >
                 {busy ? "Printing..." : "Submit"}
               </button>
