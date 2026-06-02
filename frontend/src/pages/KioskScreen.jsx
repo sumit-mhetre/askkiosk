@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Logo } from "../components/UI.jsx";
-import { kioskClaimOnly, getStatus } from "../lib/api.js";
+import { kioskClaimOnly, getStatus, publicPaperStatus } from "../lib/api.js";
 
 const VIEW = { HOME: "home", RESULT: "result", QUEUE: "queue" };
 
@@ -11,6 +11,25 @@ export default function KioskScreen() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null); // { ok, message, shownCode, jobId }
   const [queue, setQueue] = useState(null); // { jobId, position, shownCode }
+  const [paper, setPaper] = useState(null); // { enabled, count, reserved, available, isLow, isEmpty } | null
+
+  // Poll public paper status every 15s while the kiosk screen is mounted.
+  // Only renders a chip if tracking is enabled for this kiosk.
+  useEffect(() => {
+    if (!myKioskId) return;
+    let stop = false;
+    const tick = async () => {
+      try {
+        const s = await publicPaperStatus(myKioskId);
+        if (!stop) setPaper(s);
+      } catch (e) {
+        // non-fatal
+      }
+    };
+    tick();
+    const id = setInterval(tick, 15000);
+    return () => { stop = true; clearInterval(id); };
+  }, [myKioskId]);
 
   // Force navy body bg while the kiosk screen is mounted (covers browsers
   // without :has() support).
@@ -176,6 +195,27 @@ export default function KioskScreen() {
           <Logo />
         </div>
         <p className="text-center text-muted text-sm mb-4">Print Your Documents</p>
+
+        {view === VIEW.HOME && paper && paper.enabled && (
+          <div className="paper-chip-row">
+            <div
+              className={
+                "paper-chip " +
+                (paper.isEmpty ? "paper-chip-empty" : paper.isLow ? "paper-chip-low" : "paper-chip-ok")
+              }
+            >
+              <span className="paper-chip-dot" />
+              <span>
+                Paper:{" "}
+                <b>
+                  {paper.isEmpty
+                    ? "Out of paper"
+                    : `~${paper.available} sheet${paper.available === 1 ? "" : "s"} free`}
+                </b>
+              </span>
+            </div>
+          </div>
+        )}
 
         {view === VIEW.HOME && (
           <div className="grid md:grid-cols-[1fr_auto_1fr] gap-4 items-stretch">

@@ -36,18 +36,62 @@ async function sheetsForJobId(jobId) {
   return total;
 }
 
+// Sum sheets across all in-flight jobs on this kiosk (CODE_ISSUED, QUEUED,
+// PRINTING). These are sheets that ARE going to be consumed before any new
+// job. Failed/refunded/expired jobs are excluded since they release their
+// reservation.
+async function reservedSheets(kioskId) {
+  const inFlight = await prisma.job.findMany({
+    where: {
+      kioskId,
+      state: { in: ["CODE_ISSUED", "QUEUED", "PRINTING"] },
+    },
+    include: { files: true },
+  });
+  let total = 0;
+  for (const j of inFlight) {
+    if (j.multiMode === "single" || !j.files.length) {
+      total += sheetsForJob(j.pageCount, j.copies, j.doubleSided);
+    } else {
+      for (const f of j.files) {
+        total += sheetsForJob(f.pageCount, f.copies, f.doubleSided);
+      }
+    }
+  }
+  return total;
+}
+
 // Read the current state for a kiosk. Always safe to call.
+// `count` = raw paper sheets physically estimated to be in the tray.
+// `reserved` = sheets already committed to in-flight jobs.
+// `available` = count - reserved (clamped at 0). This is what we tell new
+//   customers, since previous jobs in the queue will consume their sheets first.
 async function getStatus(kioskId) {
   const kiosk = await prisma.kiosk.findUnique({ where: { id: kioskId } });
   if (!kiosk) return null;
-  const isLow = kiosk.paperTrackingEnabled && kiosk.paperCount <= kiosk.paperLowThreshold;
+  if (!kiosk.paperTrackingEnabled) {
+    return {
+      enabled: false,
+      count: kiosk.paperCount,
+      reserved: 0,
+      available: kiosk.paperCount,
+      max: kiosk.paperMax,
+      lowThreshold: kiosk.paperLowThreshold,
+      isLow: false,
+      isEmpty: false,
+    };
+  }
+  const reserved = await reservedSheets(kiosk.id);
+  const available = Math.max(0, kiosk.paperCount - reserved);
   return {
-    enabled: !!kiosk.paperTrackingEnabled,
+    enabled: true,
     count: kiosk.paperCount,
+    reserved,
+    available,
     max: kiosk.paperMax,
     lowThreshold: kiosk.paperLowThreshold,
-    isLow,
-    isEmpty: kiosk.paperTrackingEnabled && kiosk.paperCount <= 0,
+    isLow: available <= kiosk.paperLowThreshold,
+    isEmpty: available <= 0,
   };
 }
 
@@ -147,27 +191,30 @@ async function recentLogs(kioskId, limit = 20) {
 }
 
 // Check before payment: can this kiosk fit this job? Returns
-// { ok: true } if tracking is off OR enough sheets remain.
+// { ok: true } if tracking is off OR enough sheets remain AFTER currently
+// in-flight jobs (CODE_ISSUED/QUEUED/PRINTING) finish.
 // Returns { ok: false, reason, sheetsNeeded, sheetsAvailable } otherwise.
 async function precheck(kioskId, jobId) {
   const status = await getStatus(kioskId);
   if (!status || !status.enabled) return { ok: true };
   const sheetsNeeded = await sheetsForJobId(jobId);
-  if (sheetsNeeded <= status.count) return { ok: true };
+  // We compare against `available` (count - reserved), not raw count, because
+  // queued jobs ahead of this customer will consume their sheets first.
+  if (sheetsNeeded <= status.available) return { ok: true };
   return {
     ok: false,
-    reason:
-      status.count === 0
-        ? "out_of_paper"
-        : "not_enough_paper",
+    reason: status.available === 0 ? "out_of_paper" : "not_enough_paper",
     sheetsNeeded,
-    sheetsAvailable: status.count,
+    sheetsAvailable: status.available,
+    rawCount: status.count,
+    reserved: status.reserved,
   };
 }
 
 module.exports = {
   sheetsForJob,
   sheetsForJobId,
+  reservedSheets,
   getStatus,
   consume,
   add,
