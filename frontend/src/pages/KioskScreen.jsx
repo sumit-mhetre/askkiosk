@@ -12,6 +12,14 @@ export default function KioskScreen() {
   const [result, setResult] = useState(null); // { ok, message, shownCode, jobId }
   const [queue, setQueue] = useState(null); // { jobId, position, shownCode }
   const [paper, setPaper] = useState(null); // { enabled, count, reserved, available, isLow, isEmpty } | null
+  const autoFired = useRef(false);
+
+  // The phone web app URL. The QR points to the site root.
+  // This kiosk's own ID, from the URL (?kiosk=ID). Used so the QR points to
+  // this kiosk and the claim is scoped to this kiosk's operator.
+  const myKioskId = new URLSearchParams(window.location.search).get("kiosk") || "";
+  const phoneUrl =
+    window.location.origin + "/print" + (myKioskId ? `?kiosk=${myKioskId}` : "");
 
   // Force navy body bg while the kiosk screen is mounted (covers browsers
   // without :has() support).
@@ -25,7 +33,6 @@ export default function KioskScreen() {
   // against double-fire (React strict mode in dev or a stray re-render). It
   // is reset whenever the code is cleared or shrinks back below 6, so the
   // next retry will fire again.
-  const autoFired = useRef(false);
   useEffect(() => {
     if (code.length === 6 && view === VIEW.HOME && !busy && !autoFired.current) {
       autoFired.current = true;
@@ -36,13 +43,6 @@ export default function KioskScreen() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code, view, busy]);
-
-  // The phone web app URL. The QR points to the site root.
-  // This kiosk's own ID, from the URL (?kiosk=ID). Used so the QR points to
-  // this kiosk and the claim is scoped to this kiosk's operator.
-  const myKioskId = new URLSearchParams(window.location.search).get("kiosk") || "";
-  const phoneUrl =
-    window.location.origin + "/print" + (myKioskId ? `?kiosk=${myKioskId}` : "");
 
   // Poll public paper status every 15s while the kiosk screen is mounted.
   // Only renders a chip if tracking is enabled for this kiosk.
@@ -211,7 +211,7 @@ export default function KioskScreen() {
                 ) : paper.isLow ? (
                   <>
                     Paper running low:{" "}
-                    <b>~{paper.available} sheet{paper.available === 1 ? "" : "s"} free</b>
+                    <b>~{paper.available} sheet{paper.available === 1 ? "" : "s"} available</b>
                   </>
                 ) : (
                   <>
