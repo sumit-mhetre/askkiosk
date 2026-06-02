@@ -13,24 +13,6 @@ export default function KioskScreen() {
   const [queue, setQueue] = useState(null); // { jobId, position, shownCode }
   const [paper, setPaper] = useState(null); // { enabled, count, reserved, available, isLow, isEmpty } | null
 
-  // Poll public paper status every 15s while the kiosk screen is mounted.
-  // Only renders a chip if tracking is enabled for this kiosk.
-  useEffect(() => {
-    if (!myKioskId) return;
-    let stop = false;
-    const tick = async () => {
-      try {
-        const s = await publicPaperStatus(myKioskId);
-        if (!stop) setPaper(s);
-      } catch (e) {
-        // non-fatal
-      }
-    };
-    tick();
-    const id = setInterval(tick, 15000);
-    return () => { stop = true; clearInterval(id); };
-  }, [myKioskId]);
-
   // Force navy body bg while the kiosk screen is mounted (covers browsers
   // without :has() support).
   useEffect(() => {
@@ -61,6 +43,24 @@ export default function KioskScreen() {
   const myKioskId = new URLSearchParams(window.location.search).get("kiosk") || "";
   const phoneUrl =
     window.location.origin + "/print" + (myKioskId ? `?kiosk=${myKioskId}` : "");
+
+  // Poll public paper status every 15s while the kiosk screen is mounted.
+  // Only renders a chip if tracking is enabled for this kiosk.
+  useEffect(() => {
+    if (!myKioskId) return;
+    let stop = false;
+    const tick = async () => {
+      try {
+        const s = await publicPaperStatus(myKioskId);
+        if (!stop) setPaper(s);
+      } catch (e) {
+        // non-fatal
+      }
+    };
+    tick();
+    const id = setInterval(tick, 15000);
+    return () => { stop = true; clearInterval(id); };
+  }, [myKioskId]);
 
   function press(d) {
     setCode((prev) => (prev.length >= 6 ? prev : prev + d));
